@@ -1,0 +1,208 @@
+{% extends "base.html" %}
+{% block content %}
+<div id="tab-procesar" class="tab-content">
+
+    <!-- Locked view: no Drive connected -->
+    <div id="drive-locked" class="bg-white rounded-lg shadow-sm border p-12 text-center">
+        <div class="max-w-md mx-auto">
+            <div class="text-5xl mb-4">🔒</div>
+            <h2 class="text-xl font-semibold text-gray-800 mb-2">Conectá tu Google Drive</h2>
+            <p class="text-gray-500 mb-6 text-sm">Para usar la aplicación necesitás conectar tu cuenta de Google Drive. Cada usuario tiene su propia sesión independiente.</p>
+            <button id="btn-connect-drive-locked" class="bg-blue-600 text-white text-lg px-8 py-4 rounded-xl hover:bg-blue-700 transition-colors shadow-md inline-flex items-center gap-2 mx-auto">
+                <span>🔗</span> Conectar Google Drive
+            </button>
+            <p class="text-xs text-gray-400 mt-4">Al conectar, se usará el email de tu cuenta de Google como identificador de sesión.</p>
+        </div>
+    </div>
+
+    <!-- Normal content (hidden until Drive connected) -->
+    <div id="drive-connected-content" class="hidden">
+
+    <!-- Section 1: Drag & Drop -->
+    <div class="bg-white rounded-lg shadow-sm border p-6 mb-6">
+        <h2 class="text-lg font-semibold text-gray-800 mb-4">Subir resumen de tarjeta</h2>
+        <div
+            id="drop-zone"
+            class="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center cursor-pointer hover:border-blue-400 transition-colors"
+        >
+            <div class="text-gray-400 mb-2">
+                <svg class="mx-auto h-12 w-12" stroke="currentColor" fill="none" viewBox="0 0 48 48">
+                    <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            </div>
+            <p class="text-gray-600 font-medium">Arrastrá tu resumen de tarjeta aquí</p>
+            <p class="text-sm text-gray-400 mt-1">o hacé click para seleccionar archivo</p>
+            <p class="text-xs text-gray-400 mt-1">PDF — AMEX o VISA</p>
+            <input type="file" id="file-input" accept=".pdf" class="hidden">
+        </div>
+        <div id="file-info" class="hidden mt-4 p-3 bg-gray-50 rounded-lg flex items-center gap-3">
+            <span class="text-green-600 font-medium" id="file-name"></span>
+            <span class="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded" id="file-type"></span>
+        </div>
+        <div id="upload-progress" class="hidden mt-4">
+            <div class="flex items-center gap-2 text-gray-600">
+                <div class="animate-spin h-5 w-5 border-2 border-blue-600 border-t-transparent rounded-full"></div>
+                <span>Procesando archivo...</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Section 2: Drive -->
+    <div id="drive-section" class="bg-white rounded-lg shadow-sm border p-6 mb-6">
+        <div class="flex items-center justify-between mb-4">
+            <h2 class="text-lg font-semibold text-gray-800">Facturas en Google Drive</h2>
+            <div id="drive-user-info" class="hidden flex items-center gap-2 text-sm text-gray-600">
+                <span>Conectado como: <strong id="drive-user-email"></strong></span>
+                <button id="btn-disconnect-drive" class="text-xs text-red-500 hover:text-red-700 underline ml-2">Desconectar</button>
+            </div>
+        </div>
+
+        <!-- Estado no conectado -->
+        <div id="drive-connect-panel" class="text-center py-8">
+            <p class="text-gray-500 mb-4 text-sm">Conectá tu Google Drive para acceder a las facturas organizadas por Año/Mes.</p>
+            <button id="btn-connect-drive" class="bg-blue-600 text-white text-lg px-8 py-4 rounded-xl hover:bg-blue-700 transition-colors shadow-md inline-flex items-center gap-2">
+                <span>🔗</span> Conectar Google Drive
+            </button>
+        </div>
+
+        <!-- Estado conectado -->
+        <div id="drive-browser-panel" class="hidden space-y-4">
+
+            <!-- Breadcrumb -->
+            <div class="flex items-center gap-2 text-sm text-gray-600 flex-wrap" id="breadcrumb-container">
+                <span id="breadcrumb-root" class="text-blue-600 cursor-pointer hover:underline">Drive</span>
+                <span id="breadcrumb-path" class="flex items-center gap-1"></span>
+            </div>
+
+            <!-- Navigation: folders + file preview -->
+            <div id="drive-navigation">
+                <!-- Folders grid -->
+                <div id="folders-container" class="hidden">
+                    <p class="text-sm font-medium text-gray-700 mb-2">Carpetas:</p>
+                    <div id="folders-list" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3"></div>
+                </div>
+
+                <!-- Files preview -->
+                <div id="files-preview-container" class="hidden mt-4">
+                    <p class="text-sm font-medium text-gray-700 mb-2">Archivos en esta carpeta <span class="text-xs text-gray-400 font-normal">(solo vista previa)</span>:</p>
+                    <div id="files-preview-list" class="space-y-1 max-h-40 overflow-y-auto border rounded-lg p-3 bg-gray-50"></div>
+                </div>
+
+                <!-- Select folder button -->
+                <div class="mt-4 flex flex-wrap gap-3">
+                    <button id="btn-select-current-folder" class="bg-blue-600 text-white px-5 py-2 rounded-lg text-sm hover:bg-blue-700 transition-colors">
+                        ✓ Seleccionar esta carpeta
+                    </button>
+                </div>
+            </div>
+
+            <!-- Loading spinner -->
+            <div id="browse-loading" class="hidden flex items-center gap-2 text-gray-500 text-sm py-4">
+                <div class="animate-spin h-4 w-4 border-2 border-blue-600 border-t-transparent rounded-full"></div>
+                <span>Cargando...</span>
+            </div>
+
+            <!-- Files container: shown after selecting a folder -->
+            <div id="files-container" class="hidden mt-4">
+                <div class="flex items-center justify-between mb-3">
+                    <p class="text-sm font-medium text-gray-700">Archivos en la carpeta seleccionada:</p>
+                    <button onclick="setAllFiles(true)" class="text-xs text-blue-600 hover:underline">Seleccionar todos</button>
+                </div>
+                <div id="files-list" class="space-y-2 max-h-80 overflow-y-auto border rounded-lg p-3 bg-gray-50"></div>
+                <div id="facturas-info" class="hidden mt-3 flex items-center gap-2 text-sm text-gray-600">
+                    <span>Archivos seleccionados: <strong id="facturas-count">0</strong></span>
+                </div>
+                <div class="mt-4 flex flex-wrap gap-3">
+                    <button id="btn-list-facturas" class="bg-green-600 text-white px-5 py-2 rounded-lg text-sm hover:bg-green-700 transition-colors hidden">
+                        Procesar conciliación
+                    </button>
+                    <button id="btn-back-to-browse" class="text-gray-500 text-sm hover:text-gray-700 underline">
+                        ← Volver a navegar
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Section 3: Results (hidden until processed) -->
+    <div id="results-section" class="hidden bg-white rounded-lg shadow-sm border p-6 mb-6">
+        <h2 class="text-lg font-semibold text-gray-800 mb-4">Resultados de conciliación</h2>
+        <div class="flex flex-wrap gap-4 mb-4 text-sm">
+            <span class="text-green-700 bg-green-50 px-3 py-1 rounded-full font-medium">
+                Match: <span id="match-count">0</span>
+            </span>
+            <span class="text-red-700 bg-red-50 px-3 py-1 rounded-full font-medium">
+                Sin factura: <span id="unmatch-count">0</span>
+            </span>
+            <span class="text-gray-500">
+                Período: <span id="result-periodo">—</span>
+            </span>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="bg-gray-50 border-b">
+                        <th class="text-left py-3 px-4 font-medium text-gray-600">Fecha</th>
+                        <th class="text-left py-3 px-4 font-medium text-gray-600">Descripción</th>
+                        <th class="text-right py-3 px-4 font-medium text-gray-600">Monto</th>
+                        <th class="text-center py-3 px-4 font-medium text-gray-600">Estado</th>
+                        <th class="text-center py-3 px-4 font-medium text-gray-600">Confianza</th>
+                        <th class="text-center py-3 px-4 font-medium text-gray-600">Método</th>
+                    </tr>
+                </thead>
+                <tbody id="results-tbody"></tbody>
+            </table>
+        </div>
+        <div class="flex flex-wrap gap-3 mt-4">
+            <button id="btn-download-excel" class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 transition-colors">
+                Descargar Excel
+            </button>
+            <button id="btn-send-emails" class="bg-purple-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-purple-700 transition-colors">
+                Enviar Emails
+            </button>
+        </div>
+    </div>
+
+    <div id="processing-spinner" class="hidden fixed inset-0 bg-black bg-opacity-30 flex items-center justify-center z-40">
+        <div class="bg-white rounded-lg p-8 flex flex-col items-center gap-3">
+            <div class="animate-spin h-10 w-10 border-4 border-blue-600 border-t-transparent rounded-full"></div>
+            <p class="text-gray-700 font-medium">Procesando conciliación...</p>
+        </div>
+    </div>
+
+    <!-- Modal: New Card Assignment -->
+    <div id="card-modal" class="hidden fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
+        <div class="bg-white rounded-lg p-6 w-full max-w-md mx-4">
+            <h3 class="text-lg font-semibold text-gray-800 mb-4">Asignar tarjeta</h3>
+            <p class="text-sm text-gray-600 mb-4" id="card-modal-info">Nueva tarjeta detectada</p>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Nombre del responsable</label>
+                    <input type="text" id="modal-responsable" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                    <input type="email" id="modal-email" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                </div>
+            </div>
+            <div class="flex justify-end gap-3 mt-6">
+                <button id="modal-cancel" class="px-4 py-2 text-sm text-gray-600 hover:text-gray-800">Cancelar</button>
+                <button id="modal-save" class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 transition-colors">Guardar</button>
+            </div>
+        </div>
+    </div>
+</div> <!-- end drive-connected-content -->
+
+</div>
+
+<div id="tab-config" class="tab-content hidden">
+    {% include "config.html" %}
+</div>
+
+<div id="tab-historial" class="tab-content hidden">
+    <div class="bg-white rounded-lg shadow-sm border p-6">
+        <h2 class="text-lg font-semibold text-gray-800 mb-4">Historial</h2>
+        <p class="text-gray-500 text-sm">No hay procesos anteriores.</p>
+    </div>
+</div>
+{% endblock %}
