@@ -1,9 +1,11 @@
+import base64
+import io
 import os
 import uuid
 from datetime import datetime
 
-import pdfplumber
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
+from pdf2image import convert_from_path
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,6 +17,7 @@ from app.services.pdf_parser import (
     TipoResumen,
     TransaccionExtraida,
 )
+from app.services.llm_router import LLMRouter
 
 router = APIRouter()
 
@@ -68,46 +71,20 @@ async def upload_resumen(
         os.remove(save_path)
         raise HTTPException(400, "Tipo de resumen no reconocido")
 
-    modo = "pdfplumber"
+    modo = "vision"
     transacciones_extraidas: list[TransaccionExtraida] = []
 
-    try:
-        with pdfplumber.open(save_path) as pdf:
-            raw_text = "".join(page.extract_text() or "" for page in pdf.pages)
-    except Exception:
-        os.remove(save_path)
-        raise HTTPException(400, "Formato de PDF no válido")
+    llm_instance = None
+    if settings.openrouter_api_key or settings.anthropic_api_key or settings.openai_api_key:
+        llm_instance = LLMRouter(settings)
 
-    is_scanned = len(raw_text.strip()) < 10
-
-    if is_scanned:
-        llm_instance = None
-        if settings.openrouter_api_key or settings.anthropic_api_key or settings.openai_api_key:
-            try:
-                from app.services.llm_router import LLMRouter
-                llm_instance = LLMRouter(settings)
-            except ImportError:
-                pass
-        transacciones_extraidas = ResumenParser.parsear_fallback_vision(save_path, llm_instance)
-        if transacciones_extraidas:
-            modo = "vision"
-    else:
-        if tipo == TipoResumen.AMEX:
-            transacciones_extraidas = ResumenParser.parsear_amex(save_path)
-        else:
-            transacciones_extraidas = ResumenParser.parsear_visa(save_path)
-
-        if not transacciones_extraidas:
-            llm_instance = None
-            if settings.openrouter_api_key or settings.anthropic_api_key or settings.openai_api_key:
-                try:
-                    from app.services.llm_router import LLMRouter
-                    llm_instance = LLMRouter(settings)
-                except ImportError:
-                    pass
-            transacciones_extraidas = ResumenParser.parsear_fallback_vision(save_path, llm_instance)
-            if transacciones_extraidas:
-                modo = "vision"
+    images_pil = convert_from_path(save_path, dpi=200)
+    images_b64 = []
+    for img in images_pil:
+        buf = io.BytesIO()
+        img.save(buf, format='JPEG', quality=85)
+        images_b64.append(base64.b64encode(buf.getvalue()).decode('utf-8'))
+    transacciones_extraidas = ResumenParser.parsear_fallback_vision(images_b64, llm_instance)
 
     if not transacciones_extraidas:
         os.remove(save_path)

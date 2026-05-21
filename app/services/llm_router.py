@@ -90,23 +90,13 @@ class LLMRouter:
 
         raise ValueError("No hay API key de LLM configurada. Andá a Configuración > Proveedores de IA y configurá al menos una.")
 
-    def extract_with_vision(self, image_base64: str, task_type: str = "vision") -> str:
-        provider, model, api_key = self._get_provider_config(task_type)
-        if not api_key:
-            raise ValueError(f"No hay API key configurada para {provider}. Andá a Configuración > Proveedores de IA.")
-
+    def _do_vision_call(self, provider: str, model: str, api_key: str, content: list) -> str:
         if provider == "anthropic":
             import anthropic
             client = anthropic.Anthropic(api_key=api_key)
             resp = client.messages.create(
                 model=model,
-                messages=[{
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": "Extraé de esta imagen del resumen bancario todas las transacciones en formato JSON. Cada transacción debe tener: fecha, descripcion, monto, y si aparece el número de tarjeta, también incluilo."},
-                        {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": image_base64}}
-                    ]
-                }],
+                messages=[{"role": "user", "content": content}],
                 max_tokens=4000
             )
             return resp.content[0].text
@@ -116,13 +106,7 @@ class LLMRouter:
             client = OpenAI(api_key=api_key)
             resp = client.chat.completions.create(
                 model=model,
-                messages=[{
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": "Extraé de esta imagen del resumen bancario todas las transacciones en formato JSON. Cada transacción debe tener: fecha, descripcion, monto, y si aparece el número de tarjeta, también incluilo."},
-                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}}
-                    ]
-                }],
+                messages=[{"role": "user", "content": content}],
                 max_tokens=4000,
                 response_format={"type": "json_object"}
             )
@@ -130,7 +114,6 @@ class LLMRouter:
 
         elif provider == "openrouter":
             import httpx
-            from app.services.pdf_parser import ResumenParser, TransaccionExtraida
             with httpx.Client() as http:
                 resp = http.post(
                     "https://openrouter.ai/api/v1/chat/completions",
@@ -140,13 +123,7 @@ class LLMRouter:
                     },
                     json={
                         "model": model,
-                        "messages": [{
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": "Extraé de esta imagen del resumen bancario todas las transacciones en formato JSON."},
-                                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}}
-                            ]
-                        }],
+                        "messages": [{"role": "user", "content": content}],
                         "max_tokens": 4000,
                     }
                 )
@@ -156,3 +133,46 @@ class LLMRouter:
                 if "choices" not in data or not data["choices"]:
                     raise ValueError(f"OpenRouter respuesta inesperada: {str(data)[:200]}")
                 return data["choices"][0]["message"]["content"]
+
+        raise ValueError("No hay API key de LLM configurada. Andá a Configuración > Proveedores de IA y configurá al menos una.")
+
+    def extract_with_vision(self, images: list[str], task_type: str = "vision") -> str:
+        provider, model, api_key = self._get_provider_config(task_type)
+        if not api_key:
+            raise ValueError(f"No hay API key configurada para {provider}. Andá a Configuración > Proveedores de IA.")
+
+        def _build_content(prompt_text: str) -> list:
+            content = [{"type": "text", "text": prompt_text}]
+            for img in images:
+                if provider == "anthropic":
+                    content.append({
+                        "type": "image",
+                        "source": {"type": "base64", "media_type": "image/jpeg", "data": img}
+                    })
+                else:
+                    content.append({
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{img}"}
+                    })
+            return content
+
+        prompt = "Extraé de esta imagen del resumen bancario todas las transacciones en formato JSON. Cada transacción debe tener: fecha, descripcion, monto, y si aparece el número de tarjeta, también incluilo."
+        content = _build_content(prompt)
+        response_text = self._do_vision_call(provider, model, api_key, content)
+
+        try:
+            data = json.loads(response_text)
+            if isinstance(data, (list, dict)):
+                return response_text
+        except json.JSONDecodeError:
+            pass
+
+        retry_content = _build_content(f"{prompt} IMPORTANTE: Respondé SOLO con JSON válido, sin texto adicional.")
+        retry_response = self._do_vision_call(provider, model, api_key, retry_content)
+
+        try:
+            data = json.loads(retry_response)
+            if isinstance(data, (list, dict)):
+                return retry_response
+        except json.JSONDecodeError:
+            return ""

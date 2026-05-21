@@ -4,10 +4,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.dependencies import get_db
 from app.models import Resumen, Transaccion, Factura, FacturaDatos
 from app.services.conciliador import Conciliador
 from app.services.drive_service import GoogleDriveService
+from app.services.llm_extractor import InvoiceExtractor
+from app.services.llm_router import LLMRouter
 from app.services.markitdown_extractor import MarkitdownExtractor
 
 logger = logging.getLogger(__name__)
@@ -29,6 +32,10 @@ async def process_reconciliation(
 
     facturas_creadas = 0
     session_id = getattr(request, 'state', None) and getattr(request.state, 'session_id', '')
+
+    llm_router = None
+    if settings.openrouter_api_key or settings.anthropic_api_key or settings.openai_api_key:
+        llm_router = LLMRouter(settings)
 
     if carpeta_drive_id:
         drive = GoogleDriveService(db)
@@ -52,7 +59,7 @@ async def process_reconciliation(
             db.add(factura)
             await db.flush()
 
-            extraccion = await _extraer_datos_factura(markdown_text, db)
+            extraccion = await _extraer_datos_factura(markdown_text, llm_router)
             if extraccion:
                 fd = FacturaDatos(
                     factura_id=factura.id,
@@ -61,13 +68,6 @@ async def process_reconciliation(
                 db.add(fd)
 
             facturas_creadas += 1
-
-    llm_router = None
-    try:
-        from app.services import llm_router as llm_mod
-        llm_router = llm_mod
-    except ImportError:
-        pass
 
     try:
         resultados = await Conciliador.conciliar(
@@ -116,14 +116,11 @@ async def process_reconciliation(
     }
 
 
-async def _extraer_datos_factura(markdown_text: str, db) -> dict | None:
+async def _extraer_datos_factura(markdown_text: str, llm_router) -> dict | None:
     try:
-        from app.services import llm_router as llm_mod
-        extracted = await llm_mod.extract_invoice_data(markdown_text)
+        extracted = InvoiceExtractor.extract_fields_from_markdown(markdown_text, llm_router)
         if extracted and extracted.get("numero_factura"):
             return extracted
-    except ImportError:
-        pass
     except Exception:
         logger.warning("Extracción LLM falló para factura", exc_info=True)
     return None
