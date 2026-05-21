@@ -87,6 +87,10 @@ class ResumenParser:
                 result_str = llm_router.extract_with_vision(images)
                 if result_str:
                     import json
+                    import re
+                    json_match = re.search(r'```(?:json)?\s*([\s\S]*?)```', result_str)
+                    if json_match:
+                        result_str = json_match.group(1).strip()
                     try:
                         data = json.loads(result_str)
                         if isinstance(data, list):
@@ -97,12 +101,22 @@ class ResumenParser:
                             items = []
                         result = []
                         for item in items:
+                            fecha = item.get("fecha", item.get("date", ""))
+                            descripcion = item.get("descripcion", item.get("description", ""))
+                            moneda = item.get("moneda", item.get("currency", "ARS"))
+                            try:
+                                monto_raw = item.get("monto", item.get("amount", 0))
+                                if isinstance(monto_raw, str):
+                                    monto_raw = monto_raw.replace(".", "").replace(",", ".").replace("CR", "").replace("DB", "").strip()
+                                monto = float(monto_raw)
+                            except (ValueError, TypeError):
+                                continue
                             result.append(TransaccionExtraida(
-                                fecha=item.get("fecha", ""),
-                                descripcion=item.get("descripcion", item.get("description", "")),
-                                monto=float(item.get("monto", item.get("amount", 0))),
+                                fecha=fecha,
+                                descripcion=descripcion,
+                                monto=monto,
                                 numero_tarjeta=item.get("numero_tarjeta", item.get("card", None)),
-                                moneda=item.get("moneda", item.get("currency", "ARS")),
+                                moneda=moneda,
                             ))
                         if result:
                             return result

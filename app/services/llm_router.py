@@ -97,7 +97,7 @@ class LLMRouter:
             resp = client.messages.create(
                 model=model,
                 messages=[{"role": "user", "content": content}],
-                max_tokens=4000
+                max_tokens=2000
             )
             return resp.content[0].text
 
@@ -107,7 +107,7 @@ class LLMRouter:
             resp = client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": content}],
-                max_tokens=4000,
+                max_tokens=2000,
                 response_format={"type": "json_object"}
             )
             return resp.choices[0].message.content
@@ -124,8 +124,9 @@ class LLMRouter:
                     json={
                         "model": model,
                         "messages": [{"role": "user", "content": content}],
-                        "max_tokens": 4000,
-                    }
+                        "max_tokens": 2000,
+                    },
+                    timeout=120
                 )
                 data = resp.json()
                 if "error" in data:
@@ -135,6 +136,15 @@ class LLMRouter:
                 return data["choices"][0]["message"]["content"]
 
         raise ValueError("No hay API key de LLM configurada. Andá a Configuración > Proveedores de IA y configurá al menos una.")
+
+    @staticmethod
+    def _extract_json(text: str) -> str:
+        """Strip markdown code blocks and extract JSON from LLM response."""
+        import re
+        json_match = re.search(r'```(?:json)?\s*([\s\S]*?)```', text)
+        if json_match:
+            return json_match.group(1).strip()
+        return text.strip()
 
     def extract_with_vision(self, images: list[str], task_type: str = "vision") -> str:
         provider, model, api_key = self._get_provider_config(task_type)
@@ -160,18 +170,20 @@ class LLMRouter:
         content = _build_content(prompt)
         response_text = self._do_vision_call(provider, model, api_key, content)
 
+        cleaned = self._extract_json(response_text)
         try:
-            data = json.loads(response_text)
+            data = json.loads(cleaned)
             if isinstance(data, (list, dict)):
-                return response_text
+                return response_text  # return original in case caller needs it
         except json.JSONDecodeError:
             pass
 
         retry_content = _build_content(f"{prompt} IMPORTANTE: Respondé SOLO con JSON válido, sin texto adicional.")
         retry_response = self._do_vision_call(provider, model, api_key, retry_content)
 
+        cleaned = self._extract_json(retry_response)
         try:
-            data = json.loads(retry_response)
+            data = json.loads(cleaned)
             if isinstance(data, (list, dict)):
                 return retry_response
         except json.JSONDecodeError:
