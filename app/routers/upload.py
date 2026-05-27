@@ -86,7 +86,17 @@ async def upload_resumen(
         buf = io.BytesIO()
         img.save(buf, format='JPEG', quality=50)
         images_b64.append(base64.b64encode(buf.getvalue()).decode('utf-8'))
-    transacciones_extraidas = await ResumenParser.procesar_resumen_async(images_b64, llm_instance, card_type=tipo_fallback)
+
+    # Fase 1: Conteo previo de transacciones
+    expected_count = None
+    if llm_instance:
+        expected_count = await asyncio.to_thread(
+            llm_instance.count_transactions, images_b64, tipo_fallback
+        )
+
+    transacciones_extraidas, parser_warnings = await ResumenParser.procesar_resumen_async(
+        images_b64, llm_instance, card_type=tipo_fallback, expected_count=expected_count
+    )
 
     if not transacciones_extraidas:
         os.remove(save_path)
@@ -134,12 +144,26 @@ async def upload_resumen(
     await db.commit()
     await db.refresh(resumen)
 
+    # Determinar modo
+    modo_final = "vision"
+    if parser_warnings:
+        modo_final = "vision+retry"
+
+    # Merge warnings
+    all_warnings = list(parser_warnings)
+    if unmatched:
+        all_warnings.append({"codigo": "TARJETAS_SIN_MAPEO", "tarjetas": list(set(unmatched))})
+    if expected_count is None and llm_instance:
+        all_warnings.append({"codigo": "CONTEO_FALLIDO", "mensaje": "No se pudo contar transacciones previo a la extracción. El resultado puede estar incompleto."})
+
+    requiere_decision = any(w.get("codigo") == "CONTEO_DIFERENTE_POST_REINTENTO" for w in parser_warnings)
+
     return {
         "id": resumen.id,
         "tipo": tipo_final,
         "periodo": periodo,
         "archivo": file.filename,
-        "modo": modo,
+        "modo": modo_final,
         "transacciones": [
             {
                 "fecha": t.fecha,
@@ -154,9 +178,7 @@ async def upload_resumen(
             }
             for t in transacciones_extraidas
         ],
-        "warnings": (
-            [{"codigo": "TARJETAS_SIN_MAPEO", "tarjetas": list(set(unmatched))}]
-            if unmatched
-            else []
-        ),
+        "warnings": all_warnings,
+        "requiere_decision_usuario": requiere_decision,
+        "opciones_disponibles": ["reintentar", "continuar"] if requiere_decision else [],
     }

@@ -143,8 +143,9 @@ class ResumenParser:
 
     @staticmethod
     async def procesar_resumen_async(
-        images_b64: list[str], llm_router, card_type: str = "GENERIC"
-    ) -> list[TransaccionExtraida]:
+        images_b64: list[str], llm_router, card_type: str = "GENERIC",
+        expected_count: int | None = None
+    ) -> tuple[list[TransaccionExtraida], list[dict]]:
         """Procesa un resumen de tarjeta con estrategia multi-página paralela.
         
         Si son 2 páginas o menos: usa el enfoque probado (1 llamada LLM).
@@ -152,14 +153,15 @@ class ResumenParser:
         luego mergea resultados ordenados cronológicamente.
         """
         if not images_b64 or llm_router is None:
-            return []
+            return [], []
         if not hasattr(llm_router, "extract_with_vision"):
-            return []
+            return [], []
 
         if len(images_b64) <= 2:
-            return await asyncio.to_thread(
+            result = await asyncio.to_thread(
                 ResumenParser.parsear_fallback_vision, images_b64, llm_router, card_type
             )
+            return result or [], []
 
         sem = asyncio.Semaphore(3)
 
@@ -187,7 +189,30 @@ class ResumenParser:
 
         ResumenParser._validate_transactions(all_tx)
         all_tx.sort(key=lambda t: t.fecha)
-        return all_tx
+
+        parser_warnings: list[dict] = []
+
+        if expected_count is not None and len(all_tx) != expected_count:
+            if len(all_tx) < expected_count:
+                try:
+                    retry_tx = await asyncio.to_thread(
+                        ResumenParser.parsear_fallback_vision, images_b64, llm_router, card_type
+                    )
+                    if retry_tx and len(retry_tx) > len(all_tx):
+                        retry_tx.sort(key=lambda t: t.fecha)
+                        all_tx = retry_tx
+                except Exception:
+                    pass
+
+            if len(all_tx) != expected_count:
+                parser_warnings.append({
+                    "codigo": "CONTEO_DIFERENTE_POST_REINTENTO",
+                    "esperadas": expected_count,
+                    "extraidas": len(all_tx),
+                    "diferencia": expected_count - len(all_tx)
+                })
+
+        return all_tx, parser_warnings
 
     @staticmethod
     def parsear_fallback_vision(images: list[str], llm_router=None, card_type: str = "GENERIC") -> list[TransaccionExtraida]:

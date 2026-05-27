@@ -361,17 +361,40 @@ Formato JSON:
             except ValueError as e:
                 if intento == 0:
                     continue  # retry once on API error
-                return ""
+        return ""
 
-            cleaned = self._extract_json(response_text)
-            try:
-                data = json.loads(cleaned)
-                if isinstance(data, (list, dict)):
-                    return response_text
-            except json.JSONDecodeError:
-                if intento == 0:
-                    continue  # retry once on JSON error
-            break
+    def count_transactions(self, images: list[str], card_type: str = "GENERIC") -> int | None:
+        """Count real transactions in images via LLM. Returns count or None on failure."""
+        try:
+            prompt = self._get_card_prompt(card_type)
+            count_instruction = """
+
+INSTRUCCIÓN ADICIONAL:
+AHORA NO EXTRAIGAS NADA. Solo contá cuántas transacciones REALES hay en este resumen.
+
+Una transacción REAL es cualquier línea que represente:
+- Una compra, pago, débito, o cargo
+- Una cuota de una compra
+- Un crédito o pago (CR)
+
+NO cuentes:
+- Saldos anteriores ("SALDO ANTERIOR")
+- Totales, subtotales, resúmenes
+- Encabezados de tabla, números de página
+- "Gracias por su pago" o mensajes similares
+- Fees o comisiones de mantenimiento
+
+Respondé SOLO con el número entero. Ejemplo: 37"""
+            result = self.extract_text_with_prompt(images, prompt + count_instruction, task_type="vision")
+            cleaned = result.strip().strip('`').strip()
+            import re
+            match = re.search(r'\d+', cleaned)
+            if match:
+                return int(match.group())
+            return None
+        except Exception:
+            return None
+
 
         # Second attempt with stricter prompt
         retry_content = _build_content(f"{prompt} IMPORTANTE: Respondé SOLO con JSON válido, sin texto adicional.")
