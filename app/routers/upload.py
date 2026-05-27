@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import io
+import logging
 import os
 import uuid
 from datetime import datetime
@@ -19,6 +20,7 @@ from app.services.pdf_parser import (
 )
 from app.services.llm_router import LLMRouter
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -75,11 +77,14 @@ async def upload_resumen(
     if settings.openrouter_api_key or settings.anthropic_api_key or settings.openai_api_key or settings.opencode_api_key:
         llm_instance = LLMRouter(settings)
 
-    images_pil = await asyncio.to_thread(convert_from_path, save_path, dpi=150)
+    images_pil = await asyncio.to_thread(convert_from_path, save_path, dpi=100)
+    if len(images_pil) > 15:
+        logger.warning("PDF tiene %d páginas, limitando a 15", len(images_pil))
+        images_pil = images_pil[:15]
     images_b64 = []
     for img in images_pil:
         buf = io.BytesIO()
-        img.save(buf, format='JPEG', quality=60)
+        img.save(buf, format='JPEG', quality=50)
         images_b64.append(base64.b64encode(buf.getvalue()).decode('utf-8'))
     transacciones_extraidas = await ResumenParser.procesar_resumen_async(images_b64, llm_instance, card_type=tipo_fallback)
 

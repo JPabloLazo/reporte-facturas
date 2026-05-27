@@ -64,6 +64,40 @@ The upload endpoint MUST NOT block the event loop during PDF-to-image conversion
 - WHEN both trigger `convert_from_path`
 - THEN both SHALL execute without blocking the event loop
 
+### Requirement: Image Conversion DPI
+
+PDF-to-image conversion SHALL use DPI=100 for resumen processing.
+
+#### Scenario: Standard conversion
+
+- GIVEN a resumen PDF with 10pt+ fonts
+- WHEN converted to images via `convert_from_path`
+- THEN the DPI parameter MUST be 100
+
+#### Scenario: Small print safety
+
+- GIVEN a resumen PDF with very small print (<10pt)
+- WHEN converted at DPI=100
+- THEN the pipeline SHALL still complete without error
+- AND extracted fields MAY have lower accuracy
+
+### Requirement: Maximum PDF Pages
+
+The pipeline SHALL limit `convert_from_path` to a maximum of 15 pages (`max_pages=15`).
+
+#### Scenario: Within page limit
+
+- GIVEN a 6-page AMEX resumen
+- WHEN converted via `convert_from_path` with max_pages=15
+- THEN all 6 pages SHALL be returned
+
+#### Scenario: Exceeds page limit
+
+- GIVEN a resumen exceeding 15 pages
+- WHEN converted with max_pages=15
+- THEN only the first 15 pages SHALL be processed
+- AND a warning SHALL be logged
+
 ### Requirement: Non-Blocking LLM Extraction
 
 The upload endpoint MUST NOT block the event loop during LLM extraction fallback. The call MUST be wrapped in `asyncio.to_thread()`.
@@ -91,6 +125,8 @@ The resumen parser MUST process page 1 separately for metadata (card type, perio
 
 Transaction pages (page 2+) MUST be processed in parallel via `asyncio.gather` limited to 3 concurrent calls via `asyncio.Semaphore(3)`.
 
+Each LLM call SHALL process exactly 1 transaction page (batch_size=1).
+
 Merged results MUST maintain chronological order by transaction date.
 
 #### Scenario: Parallel page processing
@@ -100,12 +136,18 @@ Merged results MUST maintain chronological order by transaction date.
 - THEN pages 2–10 MUST run with at most 3 concurrent LLM calls
 - AND results MUST be merged chronologically
 
+#### Scenario: One page per call
+
+- GIVEN a 10-page resumen PDF
+- WHEN transaction pages are dispatched to LLM
+- THEN each LLM call SHALL receive exactly 1 page
+- AND results SHALL be merged chronologically
+
 #### Scenario: Single-page resumen
 
 - GIVEN a resumen PDF with only 1 page
 - WHEN processed
-- THEN all data MUST come from that single page
-- AND no parallel processing SHALL occur
+- THEN no LLM batch SHALL be dispatched for transaction pages
 
 ### Requirement: PDF Caching
 
@@ -121,13 +163,14 @@ The cache key MUST be `hashlib.md5(pdf_bytes)`.
 
 ### Requirement: Optimized JPEG Quality
 
-PDF-to-image conversion for resúmenes MUST use JPEG quality=60.
+PDF-to-image conversion for resúmenes MUST use JPEG quality=50.
+(Previously: quality=60)
 
 #### Scenario: Lower quality conversion
 
 - GIVEN a resumen PDF
 - WHEN converted to JPEG images
-- THEN the quality parameter MUST be 60
+- THEN the quality parameter MUST be 50
 
 ## MODIFIED Requirements
 

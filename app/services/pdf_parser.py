@@ -176,7 +176,7 @@ class ResumenParser:
                 return []
 
         n_pages = len(images_b64)
-        batch_size = max(1, n_pages // 3)
+        batch_size = 1
         batches = [images_b64[i:i+batch_size] for i in range(0, n_pages, batch_size)]
 
         results = await asyncio.gather(*[_batch_call(b) for b in batches])
