@@ -3,8 +3,126 @@ import json
 
 
 class LLMRouter:
+    _PROMPT_GENERIC = """Eres un extractor de transacciones de resúmenes de tarjeta de crédito de Argentina.
+Analizá el resumen y extraé SOLO las transacciones de compras/pagos en formato JSON.
+
+REGLAS:
+- Fecha en formato DD-MM-AAAA
+- Monto como número decimal (sin puntos de miles, coma decimal → punto)
+- "CR" (crédito/pago) → monto NEGATIVO
+- "DB" (débito/compra) → monto POSITIVO
+- Moneda: "ARS" o "USD"
+- tipo_tarjeta: detectar del encabezado (AMEX, VISA, Mastercard, etc.)
+- Si tiene cuotas (ej: "1/6", "1 de 6", "cuota 1"):
+  - cantidad_cuotas: número total de cuotas
+  - cuotas_faltantes: cuántas faltan pagar
+  - cuota_numero: número de esta cuota
+- Ignorar totales, subtotales, resúmenes, saldos y gracias por su pago
+
+Formato:
+[
+  {"fecha":"21-04-2026","descripcion":"MERPAGO*MELI","monto":40.00,"moneda":"ARS",
+   "numero_tarjeta":"****42000","tipo_tarjeta":"AMEX",
+   "cantidad_cuotas":4,"cuotas_faltantes":3,"cuota_numero":1}
+]"""
+
+    _PROMPT_AMEX = """Eres un extractor de transacciones de resúmenes de tarjeta AMEX de Argentina.
+Analizá el resumen y extraé SOLO las transacciones de compras/pagos en formato JSON.
+
+Formato del resumen AMEX:
+- Tabla con columnas: Fecha | Descripción | Importe $ | Importe U$S
+- Buscar "Total en Pesos" y "Total en Dólares" para identificar la moneda
+- Cuotas aparecen como "1/6", "2/6" etc.
+- Tarjeta: buscar "Titular", "Tarjeta", "Número" en el encabezado
+
+REGLAS:
+- Fecha en formato DD-MM-AAAA
+- Monto como número decimal (sin puntos de miles, coma decimal → punto)
+- Moneda: "ARS" o "USD" según la columna del importe
+- CR (crédito/pago) → monto NEGATIVO
+- DB (débito/compra) → monto POSITIVO
+- tipo_tarjeta: "AMEX"
+- Si tiene cuotas (ej: "1/6", "2/6"):
+  - cantidad_cuotas: número total de cuotas
+  - cuotas_faltantes: cuántas faltan pagar
+  - cuota_numero: número de esta cuota
+- Ignorar totales, subtotales, resúmenes, saldos, fees y "gracias por su pago"
+
+Formato JSON:
+[
+  {"fecha":"21-04-2026","descripcion":"MERPAGO*MELI","monto":40.00,"moneda":"ARS",
+   "numero_tarjeta":"****2000","tipo_tarjeta":"AMEX",
+   "cantidad_cuotas":6,"cuotas_faltantes":5,"cuota_numero":1}
+]"""
+
+    _PROMPT_VISA = """Eres un extractor de transacciones de resúmenes de tarjeta VISA de Argentina.
+Analizá el resumen y extraé SOLO las transacciones de compras/pagos en formato JSON.
+
+Formato del resumen VISA:
+- Layout de 2 columnas: débito (izquierda), crédito (derecha)
+- Fechas de liquidación vs. fecha de compra (usar la de compra)
+- "CR" = crédito/pago → monto NEGATIVO
+- "DB" = débito/compra → monto POSITIVO
+- Cuotas: "1/3", "cuota 1 de 3", etc.
+
+REGLAS:
+- Fecha en formato DD-MM-AAAA
+- Monto como número decimal (sin puntos de miles, coma decimal → punto)
+- Moneda: "ARS" o "USD"
+- tipo_tarjeta: "VISA"
+- Buscar "Nro. de Tarjeta" o "Tarjeta" para el número
+- Si tiene cuotas (ej: "1/3", "cuota 1 de 3"):
+  - cantidad_cuotas: número total de cuotas
+  - cuotas_faltantes: cuántas faltan pagar
+  - cuota_numero: número de esta cuota
+- Ignorar totales, subtotales, resúmenes, saldos y gracias por su pago
+
+Formato JSON:
+[
+  {"fecha":"21-04-2026","descripcion":"MERPAGO*MELI","monto":40.00,"moneda":"ARS",
+   "numero_tarjeta":"****2000","tipo_tarjeta":"VISA",
+   "cantidad_cuotas":3,"cuotas_faltantes":2,"cuota_numero":1}
+]"""
+
+    _PROMPT_MASTERCARD = """Eres un extractor de transacciones de resúmenes de tarjeta Mastercard de Argentina.
+Analizá el resumen y extraé SOLO las transacciones de compras/pagos en formato JSON.
+
+Formato del resumen Mastercard:
+- Tabla de consumos con columna de cuotas
+- Layout similar a VISA pero con formato propio
+- Totales en pesos al final (ignorar)
+- Cuotas: "1/3", "cuota 1", etc.
+
+REGLAS:
+- Fecha en formato DD-MM-AAAA
+- Monto como número decimal (sin puntos de miles, coma decimal → punto)
+- Moneda: "ARS" o "USD"
+- tipo_tarjeta: "MASTERCARD"
+- CR (crédito/pago) → monto NEGATIVO
+- DB (débito/compra) → monto POSITIVO
+- Si tiene cuotas:
+  - cantidad_cuotas: número total de cuotas
+  - cuotas_faltantes: cuántas faltan pagar
+  - cuota_numero: número de esta cuota
+- Ignorar totales, subtotales, resúmenes, saldos, fees y "gracias por su pago"
+
+Formato JSON:
+[
+  {"fecha":"21-04-2026","descripcion":"MERPAGO*MELI","monto":40.00,"moneda":"ARS",
+   "numero_tarjeta":"****2000","tipo_tarjeta":"MASTERCARD",
+   "cantidad_cuotas":3,"cuotas_faltantes":2,"cuota_numero":1}
+]"""
+
     def __init__(self, settings: Settings):
         self.settings = settings
+
+    def _get_card_prompt(self, card_type: str) -> str:
+        prompts = {
+            "AMEX": self._PROMPT_AMEX,
+            "VISA": self._PROMPT_VISA,
+            "MASTERCARD": self._PROMPT_MASTERCARD,
+        }
+        return prompts.get(card_type, self._PROMPT_GENERIC)
 
     def _get_provider_config(self, task_type: str) -> tuple[str, str, str]:
         model_map = {
@@ -213,7 +331,7 @@ class LLMRouter:
 
         raise ValueError("No hay API key de LLM configurada. Andá a Configuración > Proveedores de IA y configurá al menos una.")
 
-    def extract_with_vision(self, images: list[str], task_type: str = "vision") -> str:
+    def extract_with_vision(self, images: list[str], task_type: str = "vision", card_type: str = "GENERIC") -> str:
         provider, model, api_key = self._get_provider_config(task_type)
         if not api_key:
             raise ValueError(f"No hay API key configurada para {provider}. Andá a Configuración > Proveedores de IA.")
@@ -233,28 +351,7 @@ class LLMRouter:
                     })
             return content
 
-        prompt = """Eres un extractor de transacciones de resúmenes de tarjeta de crédito de Argentina.
-Analizá el resumen y extraé SOLO las transacciones de compras/pagos en formato JSON.
-
-REGLAS:
-- Fecha en formato DD/MM/AAAA
-- Monto como número decimal (sin puntos de miles, coma decimal → punto)
-- "CR" (crédito/pago) → monto NEGATIVO
-- "DB" (débito/compra) → monto POSITIVO
-- Moneda: "ARS" o "USD"
-- tipo_tarjeta: detectar del encabezado (AMEX, VISA, Mastercard, etc.)
-- Si tiene cuotas (ej: "1/6", "1 de 6", "cuota 1"):
-  - cantidad_cuotas: número total de cuotas
-  - cuotas_faltantes: cuántas faltan pagar
-  - cuota_numero: número de esta cuota
-- Ignorar totales, subtotales, resúmenes, saldos y gracias por su pago
-
-Formato:
-[
-  {"fecha":"21/04/2026","descripcion":"MERPAGO*MELI","monto":40.00,"moneda":"ARS",
-   "numero_tarjeta":"****42000","tipo_tarjeta":"AMEX",
-   "cantidad_cuotas":4,"cuotas_faltantes":3,"cuota_numero":1}
-]"""
+        prompt = self._get_card_prompt(card_type)
         content = _build_content(prompt)
 
         # First attempt with retry on API errors

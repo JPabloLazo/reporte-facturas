@@ -152,8 +152,9 @@ function initDragDrop() {
             })
             .catch(function (err) {
                 progress.classList.add('hidden');
-                document.getElementById('file-info').innerHTML =
-                    '<span class="text-red-600 font-medium">' + err.message + '</span>';
+                document.getElementById('file-info').classList.add('hidden');
+                document.getElementById('file-input').value = '';
+                document.getElementById('file-info').innerHTML = '';
                 showToast(err.message, 'error');
             });
     }

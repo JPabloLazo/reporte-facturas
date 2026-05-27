@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import io
 import os
@@ -74,13 +75,13 @@ async def upload_resumen(
     if settings.openrouter_api_key or settings.anthropic_api_key or settings.openai_api_key or settings.opencode_api_key:
         llm_instance = LLMRouter(settings)
 
-    images_pil = convert_from_path(save_path, dpi=150)
+    images_pil = await asyncio.to_thread(convert_from_path, save_path, dpi=150)
     images_b64 = []
     for img in images_pil:
         buf = io.BytesIO()
-        img.save(buf, format='JPEG', quality=70)
+        img.save(buf, format='JPEG', quality=60)
         images_b64.append(base64.b64encode(buf.getvalue()).decode('utf-8'))
-    transacciones_extraidas = ResumenParser.parsear_fallback_vision(images_b64, llm_instance)
+    transacciones_extraidas = await ResumenParser.procesar_resumen_async(images_b64, llm_instance, card_type=tipo_fallback)
 
     if not transacciones_extraidas:
         os.remove(save_path)
