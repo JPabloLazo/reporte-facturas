@@ -121,6 +121,7 @@ function initDragDrop() {
             .then(function (data) {
                 progress.classList.add('hidden');
                 window._resumenId = data.id;
+                window._uploadPeriodo = data.periodo;
 
                 // Always update file-info after upload
                 var ds = document.getElementById('drive-section');
@@ -1320,6 +1321,8 @@ function savePreviewData() {
     btnSave.textContent = 'Guardando...';
 
     var body = {
+        resumen_id: window._resumenId,
+        periodo: window._uploadPeriodo || '',
         folder_id: window._selectedFolderId,
         facturas: collected.facturas
     };
