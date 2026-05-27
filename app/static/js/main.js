@@ -2,6 +2,7 @@ document.addEventListener('DOMContentLoaded', function () {
     initTabs();
     initDragDrop();
     initDrive();
+    initPreview();
     initResults();
     initConfig();
     initCardModal();
@@ -95,16 +96,9 @@ function initDragDrop() {
             return;
         }
         fileName.textContent = file.name;
-        fileType.textContent = detectCardType(file.name);
+        fileType.textContent = 'Analizando...';
         fileInfo.classList.remove('hidden');
         uploadFile(file);
-    }
-
-    function detectCardType(filename) {
-        var name = filename.toLowerCase();
-        if (name.indexOf('amex') !== -1 || name.indexOf('american') !== -1) return 'AMEX';
-        if (name.indexOf('visa') !== -1) return 'VISA';
-        return 'No detectado';
     }
 
     function uploadFile(file) {
@@ -126,25 +120,40 @@ function initDragDrop() {
             })
             .then(function (data) {
                 progress.classList.add('hidden');
-                showToast('Archivo procesado correctamente', 'success');
-                document.getElementById('drive-section').classList.remove('hidden');
                 window._resumenId = data.id;
+
+                // Always update file-info after upload
+                var ds = document.getElementById('drive-section');
+                if (ds) ds.classList.remove('hidden');
+
+                if (data.transacciones && data.transacciones.length > 0) {
+                    document.getElementById('file-info').innerHTML =
+                        '<span class="text-green-600 font-medium">' + escapeHtml(data.archivo || '') + '</span>' +
+                        ' — <span class="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">' + escapeHtml(data.tipo || '') + '</span>' +
+                        ' — <span class="text-xs text-gray-500">' + data.transacciones.length + ' transacciones</span>';
+
+                    showTransactionsTable(data);
+                    showToast('Archivo procesado correctamente', 'success');
+                } else {
+                    document.getElementById('file-info').innerHTML =
+                        '<span class="text-amber-600 font-medium">' + escapeHtml(data.archivo || '') + '</span>' +
+                        ' — <span class="text-xs bg-amber-100 text-amber-700 px-2 py-1 rounded">' + (data.tipo || 'Sin tipo') + '</span>' +
+                        ' — <span class="text-xs text-gray-400">sin transacciones</span>';
+                    showToast('Archivo subido pero no se detectaron transacciones', 'warning');
+                }
+
                 if (data.warnings && data.warnings.length > 0) {
                     data.warnings.forEach(function (w) {
                         if (w.codigo === 'TARJETAS_SIN_MAPEO') {
-                            showToast('Tarjetas nuevas detectadas: ' + w.tarjetas.join(', ') + ' — asignales un responsable en la tabla', 'warning');
+                            showToast('Tarjetas nuevas detectadas: ' + (w.tarjetas || []).join(', ') + ' — asignales un responsable en la tabla', 'warning');
                         }
                     });
-                }
-                if (data.transacciones) {
-                    document.getElementById('file-info').innerHTML =
-                        '<span class="text-green-600 font-medium">' + data.archivo + '</span>' +
-                        ' — <span class="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">' + data.tipo + '</span>' +
-                        ' — <span class="text-xs text-gray-500">' + data.transacciones.length + ' transacciones</span>';
                 }
             })
             .catch(function (err) {
                 progress.classList.add('hidden');
+                document.getElementById('file-info').innerHTML =
+                    '<span class="text-red-600 font-medium">' + err.message + '</span>';
                 showToast(err.message, 'error');
             });
     }
@@ -501,7 +510,7 @@ function selectFolderForProcessing(folderId, folderName) {
             var processBtn = document.getElementById('btn-list-facturas');
             if (processBtn) {
                 processBtn.classList.remove('hidden');
-                processBtn.removeAttribute('disabled');
+                processBtn.disabled = false;
                 updateProcessButton();
             }
         })
@@ -515,14 +524,27 @@ function updateProcessButton() {
     var countEl = document.getElementById('facturas-count');
     var infoEl = document.getElementById('facturas-info');
     var processBtn = document.getElementById('btn-list-facturas');
+    var notice = document.getElementById('resumen-notice');
 
     if (countEl) countEl.textContent = selected;
     if (infoEl) infoEl.classList.remove('hidden');
     if (processBtn) {
         if (selected > 0 && window._resumenId && window._selectedFolderId) {
-            processBtn.removeAttribute('disabled');
+            processBtn.disabled = false;
+            if (notice) notice.classList.add('hidden');
         } else {
             processBtn.disabled = true;
+            // Show why button is disabled
+            if (notice) {
+                if (!window._resumenId) {
+                    notice.innerHTML = '⚠️ Primero subí un resumen PDF en la sección de arriba';
+                } else if (!window._selectedFolderId) {
+                    notice.innerHTML = '⚠️ Seleccioná una carpeta de Drive primero';
+                } else {
+                    notice.innerHTML = '⚠️ Seleccioná al menos un archivo';
+                }
+                notice.classList.remove('hidden');
+            }
         }
     }
 }
@@ -571,12 +593,12 @@ function initResults() {
                 })
                 .then(function(data) {
                     if (spinner) spinner.classList.add('hidden');
-                    processBtn.removeAttribute('disabled');
+                    processBtn.disabled = false;
                     showResults(data);
                 })
                 .catch(function(err) {
                     if (spinner) spinner.classList.add('hidden');
-                    processBtn.removeAttribute('disabled');
+                    processBtn.disabled = false;
                     showToast('Error: ' + err.message, 'error');
                 });
         });
@@ -639,6 +661,46 @@ function initResults() {
                 });
         });
     }
+}
+
+function showTransactionsTable(data) {
+    var section = document.getElementById('transactions-section');
+    if (!section) return;
+    section.classList.remove('hidden');
+
+    document.getElementById('tx-summary-tipo').textContent = data.tipo || '-';
+    document.getElementById('tx-summary-count').textContent = (data.transacciones || []).length;
+    document.getElementById('tx-summary-periodo').textContent = data.periodo || '-';
+
+    var tbody = document.getElementById('transactions-tbody');
+    tbody.innerHTML = '';
+    (data.transacciones || []).forEach(function (t) {
+        var cuotaStr = '';
+        if (t.cantidad_cuotas && t.cantidad_cuotas > 1) {
+            cuotaStr = t.cuota_numero + '/' + t.cantidad_cuotas;
+        } else {
+            cuotaStr = '-';
+        }
+        var montoStr = '$' + Number(t.monto).toLocaleString('es-AR', {minimumFractionDigits: 2});
+        var row = document.createElement('tr');
+        row.className = 'border-b hover:bg-gray-50';
+        row.innerHTML =
+            '<td class="py-2 px-4 text-sm">' + (t.fecha || '') + '</td>' +
+            '<td class="py-2 px-4 text-sm">' + (t.descripcion || '') + '</td>' +
+            '<td class="py-2 px-4 text-sm text-right font-medium">' + montoStr + '</td>' +
+            '<td class="py-2 px-4 text-sm text-center">' + (t.moneda || 'ARS') + '</td>' +
+            '<td class="py-2 px-4 text-sm text-center">' + cuotaStr + '</td>';
+        tbody.appendChild(row);
+    });
+
+    // Wire download buttons
+    var rid = window._resumenId;
+    document.getElementById('btn-download-tx-excel').onclick = function () {
+        window.location.href = '/api/reports/' + rid + '/transactions/excel';
+    };
+    document.getElementById('btn-download-tx-pdf').onclick = function () {
+        window.location.href = '/api/reports/' + rid + '/transactions/pdf';
+    };
 }
 
 function showResults(data) {
@@ -769,18 +831,6 @@ function initConfig() {
     }
 }
 
-function updateDriveConfigStatus(configured) {
-    var notConf = document.getElementById('drive-not-configured');
-    var conf = document.getElementById('drive-configured');
-    if (configured) {
-        if (notConf) notConf.classList.add('hidden');
-        if (conf) conf.classList.remove('hidden');
-    } else {
-        if (notConf) notConf.classList.remove('hidden');
-        if (conf) conf.classList.add('hidden');
-    }
-}
-
 function loadConfig() {
     fetch('/api/config')
         .then(function (res) { return res.json(); })
@@ -801,14 +851,6 @@ function loadConfig() {
             if (data.cards) {
                 renderCards(data.cards);
             }
-
-            // Check Drive config status
-            fetch('/api/drive/config-status')
-                .then(function (r) { return r.json(); })
-                .then(function (status) {
-                    updateDriveConfigStatus(status.configured);
-                })
-                .catch(function () {});
 
             // Load available models
             loadAvailableModels();
@@ -1012,6 +1054,313 @@ function showCardModal(cardSuffix) {
     document.getElementById('modal-responsable').value = '';
     document.getElementById('modal-email').value = '';
     modal.classList.remove('hidden');
+}
+
+/* ============== Preview ============== */
+function initPreview() {
+    var btnPreview = document.getElementById('btn-preview-facturas');
+    var btnSave = document.getElementById('btn-preview-save');
+    var btnExcel = document.getElementById('btn-preview-excel');
+
+    if (btnPreview) {
+        btnPreview.addEventListener('click', fetchPreviewData);
+    }
+    if (btnSave) {
+        btnSave.addEventListener('click', savePreviewData);
+    }
+    if (btnExcel) {
+        btnExcel.addEventListener('click', downloadPreviewExcel);
+    }
+}
+
+function fetchPreviewData() {
+    var container = document.getElementById('preview-container');
+    var loading = document.getElementById('preview-loading');
+    var errorDiv = document.getElementById('preview-error');
+    var tableContainer = document.getElementById('preview-table-container');
+    var actions = document.getElementById('preview-actions');
+    var tbody = document.getElementById('preview-tbody');
+    var progressCount = document.getElementById('preview-progress-count');
+    var btnPreview = document.getElementById('btn-preview-facturas');
+
+    if (!window._selectedFolderId) {
+        showToast('Seleccioná una carpeta de Drive primero', 'warning');
+        return;
+    }
+
+    container.classList.remove('hidden');
+    loading.classList.remove('hidden');
+    errorDiv.classList.add('hidden');
+    tableContainer.classList.add('hidden');
+    actions.classList.add('hidden');
+    tbody.innerHTML = '';
+    btnPreview.disabled = true;
+
+    var selectedIds = getSelectedFileIds();
+    if (progressCount) progressCount.textContent = selectedIds.length > 0 ? selectedIds.length : 'todos';
+
+    var body = {
+        folder_id: window._selectedFolderId
+    };
+    if (selectedIds.length > 0) {
+        body.file_ids = selectedIds;
+    }
+
+    fetch('/api/process/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+    })
+        .then(function (res) {
+            if (!res.ok) {
+                return res.json().then(function (err) {
+                    throw new Error(err.detail || 'Error al obtener vista previa');
+                });
+            }
+            return res.json();
+        })
+        .then(function (data) {
+            loading.classList.add('hidden');
+            btnPreview.disabled = false;
+
+            if (data.facturas && data.facturas.length > 0) {
+                renderPreviewTable(data.facturas);
+            } else {
+                errorDiv.textContent = 'No se encontraron facturas en la carpeta seleccionada.';
+                errorDiv.classList.remove('hidden');
+            }
+        })
+        .catch(function (err) {
+            loading.classList.add('hidden');
+            btnPreview.disabled = false;
+            errorDiv.textContent = err.message;
+            errorDiv.classList.remove('hidden');
+            showToast(err.message, 'error');
+        });
+}
+
+function renderPreviewTable(facturas) {
+    var tbody = document.getElementById('preview-tbody');
+    var tableContainer = document.getElementById('preview-table-container');
+    var actions = document.getElementById('preview-actions');
+
+    tbody.innerHTML = '';
+
+    facturas.forEach(function (f, idx) {
+        var datos = f.datos || {};
+        var estado = f.error ? 'error' : (datos.monto_total && datos.fecha && datos.emisor ? 'completo' : 'incompleto');
+
+        var estadoBadge = '';
+        if (estado === 'completo') {
+            estadoBadge = '<span class="preview-badge-ok">Completo</span>';
+        } else if (estado === 'incompleto') {
+            estadoBadge = '<span class="preview-badge-warn">Incompleto</span>';
+        } else {
+            estadoBadge = '<span class="preview-badge-error">Error</span>';
+        }
+
+        var metodoBadge = '';
+        var metodo = f.extraction_method || '';
+        if (metodo === 'markitdown') {
+            metodoBadge = '<span class="preview-badge-blue">MarkItDown</span>';
+        } else if (metodo === 'vision' || metodo === 'vision_fallback') {
+            metodoBadge = '<span class="preview-badge-purple">' + (metodo === 'vision_fallback' ? 'Vision fallback' : 'Vision') + '</span>';
+        } else {
+            metodoBadge = '<span class="text-xs text-gray-400">' + escapeHtml(metodo) + '</span>';
+        }
+
+        var tr = document.createElement('tr');
+        tr.setAttribute('data-idx', idx);
+        tr.setAttribute('data-drive-file-id', f.drive_file_id);
+
+        if (f.error) {
+            tr.innerHTML =
+                '<td class="text-sm text-gray-800">' + escapeHtml(f.drive_file_name || '') + '</td>' +
+                '<td>' + metodoBadge + '</td>' +
+                '<td colspan="7" class="text-sm text-red-600">' + escapeHtml(f.error) + '</td>';
+            tbody.appendChild(tr);
+            return;
+        }
+
+        var monto = datos.monto_total != null ? datos.monto_total : '';
+        var moneda = datos.moneda || 'ARS';
+        var fecha = datos.fecha || '';
+        var emisor = datos.emisor || '';
+        var nroFactura = datos.numero_factura || '';
+        var tipo = datos.tipo_factura || '';
+        var cuota = datos.cuota_numero != null ? datos.cuota_numero : '';
+
+        tr.innerHTML =
+            '<td class="text-sm text-gray-800">' + escapeHtml(f.drive_file_name || '') + '</td>' +
+            '<td>' + metodoBadge + '</td>' +
+            '<td><input type="number" step="0.01" class="preview-input preview-monto text-right" value="' + monto + '" data-idx="' + idx + '"></td>' +
+            '<td><select class="preview-input preview-moneda" data-idx="' + idx + '">' +
+            '<option value="ARS"' + (moneda === 'ARS' ? ' selected' : '') + '>ARS</option>' +
+            '<option value="USD"' + (moneda === 'USD' ? ' selected' : '') + '>USD</option>' +
+            '</select></td>' +
+            '<td><input type="text" class="preview-input preview-fecha" placeholder="DD/MM/YYYY" value="' + escapeHtml(fecha) + '" data-idx="' + idx + '"></td>' +
+            '<td><input type="text" class="preview-input preview-emisor" value="' + escapeHtml(emisor) + '" data-idx="' + idx + '"></td>' +
+            '<td><input type="text" class="preview-input preview-nro-factura" value="' + escapeHtml(nroFactura) + '" data-idx="' + idx + '"></td>' +
+            '<td><select class="preview-input preview-tipo" data-idx="' + idx + '">' +
+            '<option value="">—</option>' +
+            '<option value="A"' + (tipo === 'A' ? ' selected' : '') + '>A</option>' +
+            '<option value="B"' + (tipo === 'B' ? ' selected' : '') + '>B</option>' +
+            '<option value="C"' + (tipo === 'C' ? ' selected' : '') + '>C</option>' +
+            '<option value="comprobante_pago"' + (tipo === 'comprobante_pago' ? ' selected' : '') + '>Comp. Pago</option>' +
+            '<option value="null"' + (tipo === '' || tipo === 'null' ? ' selected' : '') + '>N/A</option>' +
+            '</select></td>' +
+            '<td class="text-center"><input type="number" min="1" class="preview-input preview-cuota w-16 text-center" value="' + cuota + '" data-idx="' + idx + '"></td>' +
+            '<td class="text-center">' + estadoBadge + '</td>';
+
+        tr._originalData = {
+            monto_total: datos.monto_total,
+            moneda: datos.moneda,
+            fecha: datos.fecha,
+            emisor: datos.emisor,
+            numero_factura: datos.numero_factura,
+            tipo_factura: datos.tipo_factura,
+            cuota_numero: datos.cuota_numero
+        };
+
+        tbody.appendChild(tr);
+    });
+
+    tableContainer.classList.remove('hidden');
+    actions.classList.remove('hidden');
+}
+
+function collectPreviewData() {
+    var facturas = [];
+    var rows = document.querySelectorAll('#preview-tbody tr');
+    var hasError = false;
+
+    rows.forEach(function (tr) {
+        var driveFileId = tr.getAttribute('data-drive-file-id');
+        if (!driveFileId) return;
+
+        var montoInput = tr.querySelector('.preview-monto');
+        var monedaSelect = tr.querySelector('.preview-moneda');
+        var fechaInput = tr.querySelector('.preview-fecha');
+        var emisorInput = tr.querySelector('.preview-emisor');
+        var nroFacturaInput = tr.querySelector('.preview-nro-factura');
+        var tipoSelect = tr.querySelector('.preview-tipo');
+        var cuotaInput = tr.querySelector('.preview-cuota');
+
+        if (!montoInput) return;
+
+        montoInput.classList.remove('preview-input-error');
+        fechaInput.classList.remove('preview-input-error');
+        emisorInput.classList.remove('preview-input-error');
+
+        var monto = parseFloat(montoInput.value);
+        var fecha = fechaInput.value.trim();
+        var emisor = emisorInput.value.trim();
+
+        var errors = [];
+        if (isNaN(monto)) {
+            errors.push('Monto inválido en ' + driveFileId);
+            montoInput.classList.add('preview-input-error');
+        }
+        if (!fecha) {
+            errors.push('Fecha vacía en ' + driveFileId);
+            fechaInput.classList.add('preview-input-error');
+        }
+        if (!emisor) {
+            errors.push('Emisor vacío en ' + driveFileId);
+            emisorInput.classList.add('preview-input-error');
+        }
+
+        if (errors.length > 0) {
+            hasError = true;
+            return;
+        }
+
+        var cuotaVal = cuotaInput.value.trim();
+        var cuotaNumero = cuotaVal !== '' ? parseInt(cuotaVal, 10) : null;
+        if (cuotaNumero !== null && (isNaN(cuotaNumero) || cuotaNumero < 1)) {
+            cuotaNumero = null;
+        }
+
+        var tipoVal = tipoSelect.value;
+        if (tipoVal === 'null' || tipoVal === '') {
+            tipoVal = null;
+        }
+
+        facturas.push({
+            drive_file_id: driveFileId,
+            monto_total: monto,
+            moneda: monedaSelect.value,
+            fecha: fecha,
+            emisor: emisor,
+            numero_factura: nroFacturaInput.value.trim(),
+            tipo_factura: tipoVal,
+            cuota_numero: cuotaNumero
+        });
+    });
+
+    return { facturas: facturas, hasError: hasError };
+}
+
+function savePreviewData() {
+    var btnSave = document.getElementById('btn-preview-save');
+    var btnPreview = document.getElementById('btn-preview-facturas');
+
+    var collected = collectPreviewData();
+    if (collected.hasError) {
+        showToast('Corregí los campos marcados en rojo antes de guardar', 'error');
+        return;
+    }
+    if (collected.facturas.length === 0) {
+        showToast('No hay facturas para guardar', 'warning');
+        return;
+    }
+
+    btnSave.disabled = true;
+    btnSave.textContent = 'Guardando...';
+
+    var body = {
+        folder_id: window._selectedFolderId,
+        facturas: collected.facturas
+    };
+
+    fetch('/api/process/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+    })
+        .then(function (res) {
+            if (!res.ok) {
+                return res.json().then(function (err) {
+                    throw new Error(err.detail || 'Error al guardar facturas');
+                });
+            }
+            return res.json();
+        })
+        .then(function (data) {
+            showToast(data.saved + ' facturas guardadas correctamente', 'success');
+            btnSave.disabled = true;
+            btnPreview.disabled = true;
+            btnSave.textContent = 'Guardado ✓';
+            document.getElementById('btn-preview-excel').classList.remove('hidden');
+
+            if (data.factura_ids && data.factura_ids.length > 0) {
+                window._facturaIds = data.factura_ids;
+            }
+        })
+        .catch(function (err) {
+            btnSave.disabled = false;
+            btnSave.textContent = 'Guardar y continuar';
+            showToast('Error al guardar: ' + err.message, 'error');
+        });
+}
+
+function downloadPreviewExcel() {
+    if (!window._selectedFolderId) {
+        showToast('Seleccioná una carpeta de Drive primero', 'warning');
+        return;
+    }
+    var url = '/api/process/preview/excel?folder_id=' + encodeURIComponent(window._selectedFolderId);
+    window.open(url, '_blank');
 }
 
 /* ============== Add Card Modal (config page) ============== */

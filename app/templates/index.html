@@ -47,6 +47,42 @@
         </div>
     </div>
 
+    <!-- Section 1b: Transactions list (shown after upload) -->
+    <div id="transactions-section" class="hidden bg-white rounded-lg shadow-sm border p-6 mb-6">
+        <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
+            <div>
+                <h2 class="text-lg font-semibold text-gray-800">Transacciones extraídas</h2>
+                <p class="text-sm text-gray-500 mt-1">
+                    <span id="tx-summary-tipo"></span> —
+                    <span id="tx-summary-count"></span> transacciones —
+                    Período: <span id="tx-summary-periodo"></span>
+                </p>
+            </div>
+            <div class="flex gap-2">
+                <button id="btn-download-tx-excel" class="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 transition-colors flex items-center gap-1">
+                    <span>📥</span> Excel
+                </button>
+                <button id="btn-download-tx-pdf" class="bg-red-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-red-700 transition-colors flex items-center gap-1">
+                    <span>📥</span> PDF
+                </button>
+            </div>
+        </div>
+        <div class="overflow-x-auto max-h-96 overflow-y-auto border rounded-lg">
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="bg-gray-50 border-b sticky top-0">
+                        <th class="text-left py-3 px-4 font-medium text-gray-600">Fecha</th>
+                        <th class="text-left py-3 px-4 font-medium text-gray-600">Descripción</th>
+                        <th class="text-right py-3 px-4 font-medium text-gray-600">Monto</th>
+                        <th class="text-center py-3 px-4 font-medium text-gray-600">Moneda</th>
+                        <th class="text-center py-3 px-4 font-medium text-gray-600">Cuota</th>
+                    </tr>
+                </thead>
+                <tbody id="transactions-tbody"></tbody>
+            </table>
+        </div>
+    </div>
+
     <!-- Section 2: Drive -->
     <div id="drive-section" class="bg-white rounded-lg shadow-sm border p-6 mb-6">
         <div class="flex items-center justify-between mb-4">
@@ -113,11 +149,54 @@
                     <span>Archivos seleccionados: <strong id="facturas-count">0</strong></span>
                 </div>
                 <div class="mt-4 flex flex-wrap gap-3">
-                    <button id="btn-list-facturas" class="bg-green-600 text-white px-5 py-2 rounded-lg text-sm hover:bg-green-700 transition-colors hidden">
+                    <div id="resumen-notice" class="hidden w-full text-sm text-amber-700 bg-amber-50 px-4 py-2 rounded-lg mb-2">
+                        ⚠️ Primero subí un resumen PDF en la sección de arriba
+                    </div>
+                    <button id="btn-list-facturas" class="bg-green-600 text-white px-5 py-2 rounded-lg text-sm hover:bg-green-700 transition-colors hidden disabled:opacity-50 disabled:cursor-not-allowed" disabled>
                         Procesar conciliación
+                    </button>
+                    <button id="btn-preview-facturas" class="bg-indigo-600 text-white px-5 py-2 rounded-lg text-sm hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                        Vista previa de facturas
                     </button>
                     <button id="btn-back-to-browse" class="text-gray-500 text-sm hover:text-gray-700 underline">
                         ← Volver a navegar
+                    </button>
+                </div>
+            </div>
+
+            <!-- Preview container -->
+            <div id="preview-container" class="hidden mt-6 space-y-4">
+                <h3 class="text-md font-semibold text-gray-700">Vista previa de facturas</h3>
+                <div id="preview-loading" class="hidden flex items-center gap-2 text-gray-500 text-sm">
+                    <div class="animate-spin h-4 w-4 border-2 border-indigo-600 border-t-transparent rounded-full"></div>
+                    <span>Extrayendo datos de <span id="preview-progress-count">0</span> archivos...</span>
+                </div>
+                <div id="preview-error" class="hidden text-red-600 bg-red-50 px-4 py-3 rounded-lg text-sm"></div>
+                <div id="preview-table-container" class="hidden overflow-x-auto border rounded-lg">
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="bg-gray-50 border-b">
+                                <th class="text-left py-2 px-3 font-medium text-gray-600">Archivo</th>
+                                <th class="text-left py-2 px-3 font-medium text-gray-600">Método</th>
+                                <th class="text-right py-2 px-3 font-medium text-gray-600">Monto</th>
+                                <th class="text-center py-2 px-3 font-medium text-gray-600">Moneda</th>
+                                <th class="text-left py-2 px-3 font-medium text-gray-600">Fecha</th>
+                                <th class="text-left py-2 px-3 font-medium text-gray-600">Emisor</th>
+                                <th class="text-left py-2 px-3 font-medium text-gray-600">N° Factura</th>
+                                <th class="text-center py-2 px-3 font-medium text-gray-600">Tipo</th>
+                                <th class="text-center py-2 px-3 font-medium text-gray-600">Cuota</th>
+                                <th class="text-center py-2 px-3 font-medium text-gray-600">Estado</th>
+                            </tr>
+                        </thead>
+                        <tbody id="preview-tbody"></tbody>
+                    </table>
+                </div>
+                <div id="preview-actions" class="hidden flex flex-wrap gap-3">
+                    <button id="btn-preview-save" class="bg-green-600 text-white px-5 py-2 rounded-lg text-sm hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                        Guardar y continuar
+                    </button>
+                    <button id="btn-preview-excel" class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700 transition-colors">
+                        📥 Descargar Excel
                     </button>
                 </div>
             </div>

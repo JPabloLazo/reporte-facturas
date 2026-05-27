@@ -94,9 +94,19 @@ class Conciliador:
     @staticmethod
     async def _match_code(transaccion, facturas_datos: list) -> tuple:
         candidatos = []
+        es_cuota = (transaccion.cantidad_cuotas or 1) > 1
+
         for fd in facturas_datos:
-            monto_diff = abs(abs(fd.monto_total or 0) - abs(transaccion.monto))
-            monto_tolerance = abs(transaccion.monto) * 0.01
+            if es_cuota:
+                # Match por cuotas: monto_cuota × cantidad_cuotas ≈ monto_total_factura
+                monto_total_estimado = abs(transaccion.monto) * transaccion.cantidad_cuotas
+                monto_factura = abs(fd.monto_total or 0)
+                monto_diff = abs(monto_factura - monto_total_estimado)
+                monto_tolerance = monto_total_estimado * 0.05
+            else:
+                # Match normal: monto exacto
+                monto_diff = abs(abs(fd.monto_total or 0) - abs(transaccion.monto))
+                monto_tolerance = abs(transaccion.monto) * 0.01
 
             if monto_diff > monto_tolerance:
                 continue
@@ -123,6 +133,10 @@ class Conciliador:
         elif len(candidatos) == 0:
             return None, 0.0
         else:
+            # Si hay múltiples candidatos, preferir el que tenga cuota_numero coincidente
+            for fd in candidatos:
+                if es_cuota and fd.cuota_numero == transaccion.cuota_numero:
+                    return fd, 0.90
             return None, 0.0
 
     @staticmethod

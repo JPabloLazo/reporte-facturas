@@ -17,6 +17,7 @@ class LLMRouter:
             "anthropic": self.settings.anthropic_api_key,
             "openai": self.settings.openai_api_key,
             "openrouter": self.settings.openrouter_api_key,
+            "opencode": self.settings.opencode_api_key,
         }
         model = model_map.get(task_type, self.settings.model_extraction)
 
@@ -32,7 +33,7 @@ class LLMRouter:
 
         api_key = key_map.get(provider, "")
         if not api_key:
-            for p in ["anthropic", "openai", "openrouter"]:
+            for p in ["anthropic", "openai", "openrouter", "opencode"]:
                 if key_map[p]:
                     provider = p
                     api_key = key_map[p]
@@ -68,7 +69,7 @@ class LLMRouter:
 
         elif provider == "openrouter":
             import httpx
-            with httpx.Client() as http:
+            with httpx.Client(timeout=120) as http:
                 resp = http.post(
                     "https://openrouter.ai/api/v1/chat/completions",
                     headers={
@@ -88,7 +89,59 @@ class LLMRouter:
                     raise ValueError(f"OpenRouter respuesta inesperada: {str(data)[:200]}")
                 return data["choices"][0]["message"]["content"]
 
+        elif provider == "opencode":
+            import httpx
+            with httpx.Client(timeout=300) as http:
+                resp = http.post(
+                    "https://opencode.ai/zen/go/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "model": model,
+                        "messages": messages,
+                        "max_tokens": max_tokens,
+                    },
+                    timeout=300
+                )
+                data = resp.json()
+                if "error" in data:
+                    raise ValueError(f"OpenCode error: {data['error'].get('message', str(data['error']))}")
+                if "choices" not in data or not data["choices"]:
+                    raise ValueError(f"OpenCode respuesta inesperada: {str(data)[:200]}")
+                return data["choices"][0]["message"]["content"]
+
         raise ValueError("No hay API key de LLM configurada. Andá a Configuración > Proveedores de IA y configurá al menos una.")
+
+    def extract_text_with_prompt(self, images: list[str], prompt: str, task_type: str = "vision") -> str:
+        provider, model, api_key = self._get_provider_config(task_type)
+        if not api_key:
+            raise ValueError(f"No hay API key configurada para {provider}.")
+
+        content = [{"type": "text", "text": prompt}]
+        for img in images:
+            if provider == "anthropic":
+                content.append({
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": "image/jpeg", "data": img}
+                })
+            else:
+                content.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/jpeg;base64,{img}"}
+                })
+
+        return self._do_vision_call(provider, model, api_key, content)
+
+    @staticmethod
+    def _extract_json(text: str) -> str:
+        """Strip markdown code blocks and extract JSON from LLM response."""
+        import re
+        json_match = re.search(r'```(?:json)?\s*([\s\S]*?)```', text)
+        if json_match:
+            return json_match.group(1).strip()
+        return text.strip()
 
     def _do_vision_call(self, provider: str, model: str, api_key: str, content: list) -> str:
         if provider == "anthropic":
@@ -112,9 +165,32 @@ class LLMRouter:
             )
             return resp.choices[0].message.content
 
+        elif provider == "opencode":
+            import httpx
+            with httpx.Client(timeout=300) as http:
+                resp = http.post(
+                    "https://opencode.ai/zen/go/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "model": model,
+                        "messages": [{"role": "user", "content": content}],
+                        "max_tokens": 3000,
+                    },
+                    timeout=300
+                )
+                data = resp.json()
+                if "error" in data:
+                    raise ValueError(f"OpenCode error: {data['error'].get('message', str(data['error']))}")
+                if "choices" not in data or not data["choices"]:
+                    raise ValueError(f"OpenCode respuesta inesperada: {str(data)[:200]}")
+                return data["choices"][0]["message"]["content"]
+
         elif provider == "openrouter":
             import httpx
-            with httpx.Client() as http:
+            with httpx.Client(timeout=120) as http:
                 resp = http.post(
                     "https://openrouter.ai/api/v1/chat/completions",
                     headers={
@@ -137,15 +213,6 @@ class LLMRouter:
 
         raise ValueError("No hay API key de LLM configurada. Andá a Configuración > Proveedores de IA y configurá al menos una.")
 
-    @staticmethod
-    def _extract_json(text: str) -> str:
-        """Strip markdown code blocks and extract JSON from LLM response."""
-        import re
-        json_match = re.search(r'```(?:json)?\s*([\s\S]*?)```', text)
-        if json_match:
-            return json_match.group(1).strip()
-        return text.strip()
-
     def extract_with_vision(self, images: list[str], task_type: str = "vision") -> str:
         provider, model, api_key = self._get_provider_config(task_type)
         if not api_key:
@@ -166,25 +233,67 @@ class LLMRouter:
                     })
             return content
 
-        prompt = "Extraé de esta imagen del resumen bancario todas las transacciones en formato JSON. Cada transacción debe tener: fecha, descripcion, monto, y si aparece el número de tarjeta, también incluilo."
+        prompt = """Eres un extractor de transacciones de resúmenes de tarjeta de crédito de Argentina.
+Analizá el resumen y extraé SOLO las transacciones de compras/pagos en formato JSON.
+
+REGLAS:
+- Fecha en formato DD/MM/AAAA
+- Monto como número decimal (sin puntos de miles, coma decimal → punto)
+- "CR" (crédito/pago) → monto NEGATIVO
+- "DB" (débito/compra) → monto POSITIVO
+- Moneda: "ARS" o "USD"
+- tipo_tarjeta: detectar del encabezado (AMEX, VISA, Mastercard, etc.)
+- Si tiene cuotas (ej: "1/6", "1 de 6", "cuota 1"):
+  - cantidad_cuotas: número total de cuotas
+  - cuotas_faltantes: cuántas faltan pagar
+  - cuota_numero: número de esta cuota
+- Ignorar totales, subtotales, resúmenes, saldos y gracias por su pago
+
+Formato:
+[
+  {"fecha":"21/04/2026","descripcion":"MERPAGO*MELI","monto":40.00,"moneda":"ARS",
+   "numero_tarjeta":"****42000","tipo_tarjeta":"AMEX",
+   "cantidad_cuotas":4,"cuotas_faltantes":3,"cuota_numero":1}
+]"""
         content = _build_content(prompt)
-        response_text = self._do_vision_call(provider, model, api_key, content)
 
-        cleaned = self._extract_json(response_text)
-        try:
-            data = json.loads(cleaned)
-            if isinstance(data, (list, dict)):
-                return response_text  # return original in case caller needs it
-        except json.JSONDecodeError:
-            pass
+        # First attempt with retry on API errors
+        for intento in range(2):
+            try:
+                response_text = self._do_vision_call(provider, model, api_key, content)
+            except ValueError as e:
+                if intento == 0:
+                    continue  # retry once on API error
+                return ""
 
+            cleaned = self._extract_json(response_text)
+            try:
+                data = json.loads(cleaned)
+                if isinstance(data, (list, dict)):
+                    return response_text
+            except json.JSONDecodeError:
+                if intento == 0:
+                    continue  # retry once on JSON error
+            break
+
+        # Second attempt with stricter prompt
         retry_content = _build_content(f"{prompt} IMPORTANTE: Respondé SOLO con JSON válido, sin texto adicional.")
-        retry_response = self._do_vision_call(provider, model, api_key, retry_content)
+        for intento in range(2):
+            try:
+                retry_response = self._do_vision_call(provider, model, api_key, retry_content)
+            except ValueError:
+                if intento == 0:
+                    continue
+                return ""
 
-        cleaned = self._extract_json(retry_response)
-        try:
-            data = json.loads(cleaned)
-            if isinstance(data, (list, dict)):
-                return retry_response
-        except json.JSONDecodeError:
-            return ""
+            cleaned = self._extract_json(retry_response)
+            try:
+                data = json.loads(cleaned)
+                if isinstance(data, (list, dict)):
+                    return retry_response
+            except json.JSONDecodeError:
+                if intento == 0:
+                    continue
+            break
+
+        return ""

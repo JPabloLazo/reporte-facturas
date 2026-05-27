@@ -60,7 +60,10 @@ class Transaccion(Base):
     monto = Column(Float, nullable=False)
     numero_tarjeta = Column(String, nullable=True)
     moneda = Column(String, nullable=False)
-    tipo = Column(String, nullable=False)  # AMEX / VISA
+    tipo = Column(String, nullable=False)  # AMEX / VISA / Mastercard / etc
+    cantidad_cuotas = Column(Integer, nullable=True, default=1)
+    cuotas_faltantes = Column(Integer, nullable=True, default=0)
+    cuota_numero = Column(Integer, nullable=True, default=1)
 
     resumen = relationship("Resumen", back_populates="transacciones")
     conciliaciones = relationship("Conciliacion", back_populates="transaccion")
@@ -95,6 +98,7 @@ class FacturaDatos(Base):
     cuit_emisor = Column(String, nullable=False)
     moneda = Column(String, nullable=False)
     numero_factura = Column(String, nullable=False)
+    cuota_numero = Column(Integer, nullable=True, default=None)
 
     factura = relationship("Factura", back_populates="datos")
 

@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     openai_api_key: str = ""
     openrouter_api_key: str = ""
+    opencode_api_key: str = ""
     default_llm_provider: str = "anthropic"
     model_extraction: str = "claude-3-5-sonnet-20241022"
     model_vision: str = "gpt-4o"

@@ -1,5 +1,4 @@
 import re
-from enum import Enum
 from dataclasses import dataclass
 
 import pdfplumber
@@ -9,11 +8,6 @@ class PDFParseError(Exception):
     pass
 
 
-class TipoResumen(Enum):
-    AMEX = "AMEX"
-    VISA = "VISA"
-
-
 @dataclass
 class TransaccionExtraida:
     fecha: str
@@ -21,21 +15,28 @@ class TransaccionExtraida:
     monto: float
     numero_tarjeta: str | None = None
     moneda: str = "ARS"
+    tipo_tarjeta: str = "DESCONOCIDO"
+    cantidad_cuotas: int | None = None
+    cuotas_faltantes: int | None = None
+    cuota_numero: int | None = None
 
 
 class ResumenParser:
 
     @staticmethod
-    def detectar_tipo(file_path: str) -> TipoResumen:
+    def detectar_tipo(file_path: str) -> str:
+        """Detecta tipo de tarjeta por keywords en el PDF. No falla nunca."""
         with pdfplumber.open(file_path) as pdf:
             for page in pdf.pages[:3]:
                 text = page.extract_text() or ""
                 text_lower = text.lower()
                 if "american express" in text_lower or "amex" in text_lower:
-                    return TipoResumen.AMEX
+                    return "AMEX"
                 if "visa" in text_lower:
-                    return TipoResumen.VISA
-        raise ValueError("Tipo de resumen no reconocido")
+                    return "VISA"
+                if "mastercard" in text_lower or "master card" in text_lower:
+                    return "MASTERCARD"
+        return "DESCONOCIDO"
 
     @staticmethod
     def _parse_amount(value: str) -> float:
@@ -84,7 +85,10 @@ class ResumenParser:
     def parsear_fallback_vision(images: list[str], llm_router=None) -> list[TransaccionExtraida]:
         if llm_router is not None and hasattr(llm_router, "extract_with_vision"):
             if images:
-                result_str = llm_router.extract_with_vision(images)
+                try:
+                    result_str = llm_router.extract_with_vision(images)
+                except Exception:
+                    result_str = ""
                 if result_str:
                     import json
                     import re
@@ -117,6 +121,10 @@ class ResumenParser:
                                 monto=monto,
                                 numero_tarjeta=item.get("numero_tarjeta", item.get("card", None)),
                                 moneda=moneda,
+                                tipo_tarjeta=item.get("tipo_tarjeta", "DESCONOCIDO"),
+                                cantidad_cuotas=item.get("cantidad_cuotas"),
+                                cuotas_faltantes=item.get("cuotas_faltantes"),
+                                cuota_numero=item.get("cuota_numero"),
                             ))
                         if result:
                             return result

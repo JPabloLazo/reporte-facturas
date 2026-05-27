@@ -14,7 +14,6 @@ from app.dependencies import get_db
 from app.models import Resumen, Transaccion, TarjetaUsuario
 from app.services.pdf_parser import (
     ResumenParser,
-    TipoResumen,
     TransaccionExtraida,
 )
 from app.services.llm_router import LLMRouter
@@ -65,37 +64,38 @@ async def upload_resumen(
     with open(save_path, "wb") as f:
         f.write(content)
 
-    try:
-        tipo = ResumenParser.detectar_tipo(save_path)
-    except ValueError:
-        os.remove(save_path)
-        raise HTTPException(400, "Tipo de resumen no reconocido")
+    # Detect tipo por keywords (fallback rápido, nunca falla)
+    tipo_fallback = ResumenParser.detectar_tipo(save_path)
 
     modo = "vision"
     transacciones_extraidas: list[TransaccionExtraida] = []
 
     llm_instance = None
-    if settings.openrouter_api_key or settings.anthropic_api_key or settings.openai_api_key:
+    if settings.openrouter_api_key or settings.anthropic_api_key or settings.openai_api_key or settings.opencode_api_key:
         llm_instance = LLMRouter(settings)
 
-    images_pil = convert_from_path(save_path, dpi=200)
+    images_pil = convert_from_path(save_path, dpi=150)
     images_b64 = []
     for img in images_pil:
         buf = io.BytesIO()
-        img.save(buf, format='JPEG', quality=85)
+        img.save(buf, format='JPEG', quality=70)
         images_b64.append(base64.b64encode(buf.getvalue()).decode('utf-8'))
     transacciones_extraidas = ResumenParser.parsear_fallback_vision(images_b64, llm_instance)
 
     if not transacciones_extraidas:
         os.remove(save_path)
-        has_llm = bool(settings.openrouter_api_key or settings.anthropic_api_key or settings.openai_api_key)
+        has_llm = bool(settings.openrouter_api_key or settings.anthropic_api_key or settings.openai_api_key or settings.opencode_api_key)
         if not has_llm:
             raise HTTPException(400, "No se pudieron extraer transacciones. El PDF podría ser una imagen (foto de WhatsApp). Configurá una API key de IA en Configuración > Proveedores de IA para activar el procesamiento por imagen.")
         raise HTTPException(400, "No se pudieron extraer transacciones del PDF. Verificá que el formato del resumen sea compatible (AMEX o VISA).")
 
+    # Usar tipo_tarjeta del LLM como primario, fallback al keyword scan
+    tipo_llm = transacciones_extraidas[0].tipo_tarjeta if transacciones_extraidas else "DESCONOCIDO"
+    tipo_final = tipo_llm if tipo_llm != "DESCONOCIDO" else tipo_fallback
+
     periodo = _infer_periodo(transacciones_extraidas)
     resumen = Resumen(
-        tipo=tipo.value,
+        tipo=tipo_final,
         periodo=periodo,
         archivo_nombre=file.filename,
     )
@@ -116,7 +116,10 @@ async def upload_resumen(
             monto=t.monto,
             numero_tarjeta=t.numero_tarjeta,
             moneda=t.moneda,
-            tipo=tipo.value,
+            tipo=t.tipo_tarjeta if t.tipo_tarjeta and t.tipo_tarjeta != "DESCONOCIDO" else tipo_fallback,
+            cantidad_cuotas=t.cantidad_cuotas,
+            cuotas_faltantes=t.cuotas_faltantes,
+            cuota_numero=t.cuota_numero,
         )
         db.add(trans)
         if t.numero_tarjeta and t.numero_tarjeta not in known_cards:
@@ -127,7 +130,7 @@ async def upload_resumen(
 
     return {
         "id": resumen.id,
-        "tipo": tipo.value,
+        "tipo": tipo_final,
         "periodo": periodo,
         "archivo": file.filename,
         "modo": modo,
@@ -138,6 +141,10 @@ async def upload_resumen(
                 "monto": t.monto,
                 "numero_tarjeta": t.numero_tarjeta,
                 "moneda": t.moneda,
+                "tipo_tarjeta": t.tipo_tarjeta,
+                "cantidad_cuotas": t.cantidad_cuotas,
+                "cuotas_faltantes": t.cuotas_faltantes,
+                "cuota_numero": t.cuota_numero,
             }
             for t in transacciones_extraidas
         ],
