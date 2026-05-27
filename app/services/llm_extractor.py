@@ -10,29 +10,53 @@ logger = logging.getLogger(__name__)
 class InvoiceExtractor:
     @staticmethod
     def extract_fields_from_markdown(markdown_text: str, llm_router: LLMRouter) -> dict:
-        system_prompt = """Eres un extractor de datos de facturas argentinas. 
-        Dado el texto de una factura en formato Markdown, extraé los siguientes campos y devolvelos como JSON:
+        system_prompt = """Eres un extractor estructurado de datos de facturas argentinas. 
+Recibís el texto de una factura extraído automáticamente (puede venir con ruido, tablas o saltos de línea).
+Tu trabajo es analizar el texto COMPLETO y devolver ÚNICAMENTE un objeto JSON con los campos detectados.
 
-        {
-            "monto_total": float | null,
-            "subtotal": float | null,
-            "tipo_factura": string | null,
-            "fecha": string | null (formato DD-MM-YYYY),
-            "vencimiento": string | null (formato DD-MM-YYYY),
-            "emisor": string | null,
-            "cuit_emisor": string | null,
-            "moneda": string | null ("ARS", "USD", etc.),
-            "numero_factura": string | null,
-            "cuota_numero": int | null
-        }
+Campos requeridos (devolvé null SOLO si el campo está realmente ausente del texto):
+{
+  "monto_total": float | null,
+  "subtotal": float | null,
+  "tipo_factura": string | null,
+  "fecha": string | null,
+  "vencimiento": string | null,
+  "emisor": string | null,
+  "cuit_emisor": string | null,
+  "moneda": string | null,
+  "numero_factura": string | null,
+  "cuota_numero": int | null
+}
 
-        Reglas:
-        - Si un campo no aparece en la factura, devolvé null (no inventes)
-        - Si hay múltiples montos, el monto_total es el importe final
-        - Para facturas de servicios USA (Apple, Google, etc.), tipo_factura = "comprobante_pago"
-        - Si la fecha aparece en formato YYYY-MM-DD o DD/MM/YYYY, convertila a DD-MM-YYYY.
-        - Para cuota_numero: si la factura dice 'Cuota 2/6' o 'Cuota 2 de 6', devolvé el número de cuota (ej: 2). Si no aplica, null.
-        - Solo devolvé el JSON, sin texto adicional"""
+=== ESTRATEGIA DE BÚSQUEDA (seguí este orden para cada campo) ===
+
+1. monto_total: buscá las palabras "TOTAL A PAGAR", "TOTAL:", "Total a pagar", "Importe total", "Neto a pagar", "TOTAL". Elegí el importe final (suele ser el más grande o el último). Ignorá "Total AL 2do VENCIMIENTO" o "Total con recargo" — NO son el monto total. Convertí "51.091,25" a 51091.25 y "$ 135.488,90" a 135488.90.
+
+2. subtotal: buscá "Subtotal", "Total Consumo", "Total Cargos", "Total cargo fijo + variable", "Neto gravado", "Subtotal IVA". Es el importe ANTES de impuestos. Si no se distingue claramente del total, null.
+
+3. tipo_factura: buscá en el encabezado letras grandes ("A", "B", "C", "M", "E"). Si el texto menciona "Consumidor Final", "IVA CONSUMIDOR FINAL" o "IVA Consumidor Final", usá "B". Si es una empresa con IVA discriminado, usá "A". Para servicios digitales extranjeros (Apple, Google, AWS, Netflix, PlayStation, Microsoft, Spotify, Meta), usá "comprobante_pago". Si no se puede determinar, null.
+
+4. fecha: buscá "Fecha de emisión:", "Fecha:", "Fecha emisión:", "Fecha de emisión". Convertí a DD-MM-YYYY. Formatos aceptados: "DD/MM/YYYY", "YYYY-MM-DD", "DD-MM-YYYY". Ej: "16/05/2026" → "16-05-2026".
+
+5. vencimiento: buscá "Fecha Vto", "Fecha de Vencimiento", "Vencimiento:", "Fecha Vto. CAE", "CAE:", "Vto:", "Vto. CAE", "primer vencimiento", "Total a pagar hasta el". NO uses "Próximo Vencimiento Estimado" ni "2do. Vencimiento". Este es uno de los campos MÁS importantes — revisá bien todo el texto antes de poner null.
+
+6. emisor: buscá el nombre de la empresa en el encabezado. Ej: "Edenor", "AySA", "Telefónica", "Naturgy", "NEWTON STATION", "Agua y Saneamientos Argentinos S.A.", "Empresa Distribuidora".
+
+7. cuit_emisor: buscá "CUIT:", "CUIT Nº", "C.U.I.T.", "CUIT". Extraé SOLO los 11 dígitos, sin guiones. Ej: "30-70956507-5" → "30709565075". Revisá bien — suele estar en el encabezado junto al emisor.
+
+8. moneda: buscá "$", "pesos", "USD", "U$S". Default "ARS" si los montos están en pesos. Si aparece "USD" o "U$S", usá "USD".
+
+9. numero_factura: buscá "Factura Nº:", "Nro Factura:", "Nro Serie:", "Número:", "Factura". Suele estar cerca de la fecha. Formato puede ser compuesto: "0003-01065344" o simple: "0027-34475147".
+
+10. cuota_numero: buscá "Cuota", "cuota N/M", "N de M", "plan de pago". Si el texto menciona un plan de cuotas activo, extraé el número de cuota actual. Si no aplica, null.
+
+=== REGLAS GENERALES ===
+- Recorré TODO el texto antes de decidir que un campo es null. No te rindas rápido.
+- Si encontrás múltiples fechas, usá la de "emisión" para fecha y la de "vencimiento" o "Vto" para vencimiento.
+- Si el mismo campo aparece varias veces, elegí el valor más específico (ej: "Total a pagar" sobre "Total" genérico).
+- Para montos: eliminá puntos de miles y convertí coma decimal a punto.
+- No inventes datos. Si realmente no aparece tras buscar con las keywords indicadas, poné null.
+- Respondé SOLO con el JSON válido. Sin explicaciones, sin markdown, sin texto adicional."""
 
         try:
             response = llm_router.chat(
@@ -108,9 +132,9 @@ class InvoiceExtractor:
 
     @staticmethod
     def extract_fields_from_images(images_base64: list[str], llm_router: LLMRouter) -> dict:
-        vision_prompt = """Eres un analista visual de facturas argentinas. Analizá la imagen proporcionada y extraé los datos estructurados.
+        vision_prompt = """Eres un analista visual de facturas argentinas. Analizá la imagen proporcionada y extraé los datos estructurados siguiendo un método ordenado.
 
-Devolvé ÚNICAMENTE un objeto JSON con estos campos (null si no se ve en la imagen):
+Devolvé ÚNICAMENTE un objeto JSON con estos campos:
 {
   "monto_total": float | null,
   "subtotal": float | null,
@@ -124,15 +148,55 @@ Devolvé ÚNICAMENTE un objeto JSON con estos campos (null si no se ve en la ima
   "cuota_numero": int | null
 }
 
-Reglas visuales:
-- fecha y vencimiento: formato DD-MM-YYYY. Si en la imagen dice "15/01/2026", devolvé "15-01-2026".
-- monto_total: buscá el IMPORTE FINAL (suele estar abajo a la derecha, junto a "Total", "Importe total" o "Neto a pagar").
-- subtotal: aparece antes de IVA/impuestos. Si no se distingue, null.
-- tipo_factura: letra grande en el encabezado ("A", "B", "C", etc.). Para Apple, Google, Amazon, Netflix, etc., usá "comprobante_pago".
-- moneda: si ves "U$S" o "USD", devolvé "USD". Si no, "ARS".
-- cuit_emisor: número de 11 dígitos, a veces con guiones. Devolvé solo dígitos (ej: "30712345678").
-- cuota_numero: si la imagen muestra "Cuota 3 de 12" o "3/12", devolvé 3.
-- No inventes datos. Si algo no se lee claramente, null.
+=== MÉTODO DE ESCANEO VISUAL (seguí este orden) ===
+
+1. Primero, identificá el TIPO de documento:
+   - Factura argentina de servicios (luz, agua, gas, teléfono) → formato tabular con CUIT, fecha de emisión, vencimiento
+   - Factura argentina de compra (tipo A/B/C) → encabezado con letra grande, CAE, fecha
+   - Comprobante de pago extranjero (Apple, Google, PlayStation, Netflix, etc.) → sin CUIT argentino, moneda USD
+
+2. monto_total: Recorré la imagen de arriba hacia abajo buscando el IMPORTE FINAL.
+   Posiciones típicas: abajo a la derecha, última fila de una tabla, recuadro destacado.
+   Keywords: "TOTAL A PAGAR", "TOTAL:", "Total a pagar", "Neto a pagar", "Importe total".
+   Ignorá "Total AL 2do VENCIMIENTO" o montos con "recargo".
+   Formato: "$ 135.488,90" → 135488.90.
+
+3. subtotal: Buscá arriba del total. Keywords: "Subtotal", "Total Consumo", "Total cargo", "Neto gravado".
+   Si no hay separación clara entre subtotal e impuestos, null.
+
+4. fecha: Buscá en el ENCABEZADO o primeras líneas. Keywords: "Fecha de emisión:", "Fecha:", "Fecha emisión:".
+   Formato DD-MM-YYYY. Ej: "16/05/2026" → "16-05-2026".
+
+5. vencimiento: Buscá CERCA de la fecha de emisión o en un recuadro separado.
+   Keywords: "Fecha Vto", "Fecha de Vencimiento", "Vencimiento:", "Vto:", "CAE:", "Fecha Vto. CAE",
+   "primer vencimiento", "Total a pagar hasta el", "AL VENCIMIENTO".
+   NO uses "2do. Vencimiento" ni "Próximo Vencimiento Estimado".
+   Escaneá bien toda la imagen — este campo es crítico.
+
+6. tipo_factura: Buscá una LETRA GRANDE en el encabezado (círculo o rectángulo): "A", "B", "C", "M", "E".
+   Si no hay letra pero ves "Consumidor Final" o "IVA Consumidor Final" → "B".
+   Si es un servicio digital extranjero (Apple, Google, PlayStation, Netflix, etc.) → "comprobante_pago".
+
+7. emisor: Buscá en la parte SUPERIOR de la imagen (logo o nombre principal).
+   Ej: "Edenor", "AySA", "Telefónica", "Naturgy", "NEWTON STATION", "PlayStation Store".
+
+8. cuit_emisor: Buscá en el encabezado, cerca del emisor. Número de 11 dígitos.
+   Keywords: "CUIT:", "CUIT Nº", "C.U.I.T.". Limpiá guiones: "30-70956507-5" → "30709565075".
+   En comprobantes extranjeros, null (no tienen CUIT argentino).
+
+9. moneda: "$" o "pesos" → "ARS". "USD", "U$S", "US$" → "USD". Default "ARS".
+
+10. numero_factura: Buscá cerca del encabezado. "Factura Nº:", "Nro Factura:", "Factura:", "Número:".
+    Formato: "0003-01065344" o "0027-34475147".
+
+11. cuota_numero: Buscá "Cuota", "N de M", "plan de cuotas". Si aplica, extraé el número. null si no.
+
+=== REGLAS GENERALES ===
+- Escaneá la imagen COMPLETA antes de decidir null. No te rindas rápido.
+- Si un campo aparece en varias posiciones, elegí el valor más esperado (total: abajo-derecha; emisor: arriba).
+- Montos: eliminá puntos de miles, convertí coma decimal a punto.
+- Fechas siempre DD-MM-YYYY. Si ves barras (/), reemplazalas por guiones (-).
+- No inventes. Si no se ve claramente, null.
 - Respondé SOLO con JSON válido. Sin explicaciones, sin markdown, sin texto extra."""
 
         try:

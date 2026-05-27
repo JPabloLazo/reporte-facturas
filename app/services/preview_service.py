@@ -58,13 +58,14 @@ class PreviewService:
                     if file_ext in IMAGE_EXTENSIONS:
                         img = Image.open(temp_path)
                         buffer = io.BytesIO()
-                        img.convert("RGB").save(buffer, format="JPEG", quality=85)
+                        img.convert("RGB").save(buffer, format="JPEG", quality=60)
                         images_base64.append(base64.b64encode(buffer.getvalue()).decode("utf-8"))
                     else:
-                        pages = convert_from_bytes(file_bytes)
+                        pages = convert_from_bytes(file_bytes, dpi=150)
+                        pages = pages[-3:]  # Keep last 3 pages (totals)
                         for page in pages:
                             buffer = io.BytesIO()
-                            page.convert("RGB").save(buffer, format="JPEG", quality=85)
+                            page.convert("RGB").save(buffer, format="JPEG", quality=60)
                             images_base64.append(base64.b64encode(buffer.getvalue()).decode("utf-8"))
 
                     if images_base64 and llm_router:
@@ -119,21 +120,25 @@ class PreviewService:
         ]
         sorted_files = markdown_candidates + vision_candidates
 
-        resultados = []
-        for f in sorted_files:
-            try:
-                res = await asyncio.wait_for(procesar_archivo(f), timeout=60)
-                resultados.append(res)
-            except asyncio.TimeoutError:
-                logger.warning("Timeout procesando %s", f.get("name", ""))
-                resultados.append({
-                    "drive_file_id": f.get("id", ""),
-                    "drive_file_name": f.get("name", ""),
-                    "file_extension": os.path.splitext(f.get("name", ""))[1].lower(),
-                    "extraction_method": "error",
-                    "raw_text": "",
-                    "datos": None,
-                    "error": "Timeout: el archivo excedió el límite de 60 segundos",
-                })
+        # Parallel processing with concurrency limit
+        sem = asyncio.Semaphore(4)
 
+        async def procesar_con_semaphore(f: dict) -> dict:
+            async with sem:
+                try:
+                    return await asyncio.wait_for(procesar_archivo(f), timeout=120)
+                except asyncio.TimeoutError:
+                    logger.warning("Timeout procesando %s", f.get("name", ""))
+                    return {
+                        "drive_file_id": f.get("id", ""),
+                        "drive_file_name": f.get("name", ""),
+                        "file_extension": os.path.splitext(f.get("name", ""))[1].lower(),
+                        "extraction_method": "error",
+                        "raw_text": "",
+                        "datos": None,
+                        "error": "Timeout: el archivo excedió el límite de 120 segundos",
+                    }
+
+        tasks = [procesar_con_semaphore(f) for f in sorted_files]
+        resultados = await asyncio.gather(*tasks)
         return resultados, False
