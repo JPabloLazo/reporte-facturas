@@ -87,12 +87,21 @@ async def upload_resumen(
         img.save(buf, format='JPEG', quality=50)
         images_b64.append(base64.b64encode(buf.getvalue()).decode('utf-8'))
 
-    # Fase 1: Conteo previo de transacciones
+    # Fase 1: Conteo previo de transacciones (página por página en paralelo)
     expected_count = None
     if llm_instance:
-        expected_count = await asyncio.to_thread(
-            llm_instance.count_transactions, images_b64, tipo_fallback
-        )
+        sem_count = asyncio.Semaphore(3)
+
+        async def _count_page(img_b64: str) -> int | None:
+            async with sem_count:
+                return await asyncio.to_thread(
+                    llm_instance.count_transactions, [img_b64], tipo_fallback
+                )
+
+        count_results = await asyncio.gather(*[_count_page(img) for img in images_b64])
+        valid_counts = [c for c in count_results if c is not None]
+        if valid_counts:
+            expected_count = sum(valid_counts)
 
     transacciones_extraidas, parser_warnings = await ResumenParser.procesar_resumen_async(
         images_b64, llm_instance, card_type=tipo_fallback, expected_count=expected_count
