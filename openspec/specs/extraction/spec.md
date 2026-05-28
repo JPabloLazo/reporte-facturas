@@ -117,3 +117,15 @@ The system MUST return all resumen dates in DD-MM-YYYY format.
 - GIVEN a resumen with "03/15/2025"
 - WHEN extraction completes
 - THEN the returned date MUST be "15-03-2025"
+
+### Requirement: Response Variable Initialization (REQ-RESP-001)
+
+The system SHALL initialize `response = ""` before the first extraction try block so that the error handler never accesses an unbound variable.
+
+#### Scenario: Both attempts fail
+
+- GIVEN the first LLM call raises an exception before assigning `response`
+- AND the second LLM call also raises an exception before assigning `response`
+- WHEN `extract_fields_from_markdown` handles the exceptions
+- THEN the method SHALL return `{"error": "invalid_json", ...}` without raising `UnboundLocalError`
+- AND `raw` in the response SHALL be `""`

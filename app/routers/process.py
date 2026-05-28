@@ -35,6 +35,7 @@ async def process_reconciliation(
         raise HTTPException(404, "Resumen no encontrado")
 
     facturas_creadas = 0
+    errores_extraccion = 0
     session_id = getattr(request, 'state', None) and getattr(request.state, 'session_id', '')
 
     llm_router = None
@@ -47,31 +48,45 @@ async def process_reconciliation(
         pdf_files = [f for f in files if f.get("mimeType") == "application/pdf"]
 
         for f in pdf_files:
-            file_bytes = await drive.download_file(session_id, f["id"])
-            temp_path = f"/tmp/{f['id']}_{f['name']}"
-            with open(temp_path, "wb") as fh:
-                fh.write(file_bytes)
+            try:
+                file_bytes = await drive.download_file(session_id, f["id"])
+                temp_path = f"/tmp/{f['id']}_{f['name']}"
+                with open(temp_path, "wb") as fh:
+                    fh.write(file_bytes)
 
-            markdown_text = MarkitdownExtractor.convert_to_markdown(temp_path)
+                markdown_text = MarkitdownExtractor.convert_to_markdown(temp_path)
 
-            factura = Factura(
-                drive_file_id=f["id"],
-                drive_file_name=f["name"],
-                periodo=resumen.periodo,
-                markdown_text=markdown_text,
-            )
-            db.add(factura)
-            await db.flush()
-
-            extraccion = await _extraer_datos_factura(markdown_text, llm_router)
-            if extraccion:
-                fd = FacturaDatos(
-                    factura_id=factura.id,
-                    **extraccion,
+                factura = Factura(
+                    drive_file_id=f["id"],
+                    drive_file_name=f["name"],
+                    periodo=resumen.periodo,
+                    markdown_text=markdown_text,
                 )
-                db.add(fd)
+                db.add(factura)
+                await db.flush()
 
-            facturas_creadas += 1
+                extraccion = await _extraer_datos_factura(markdown_text, llm_router)
+                if extraccion:
+                    fd = FacturaDatos(
+                        factura_id=factura.id,
+                        monto_total=extraccion.get("monto_total"),
+                        subtotal=extraccion.get("subtotal"),
+                        tipo_factura=extraccion.get("tipo_factura"),
+                        fecha=extraccion.get("fecha"),
+                        vencimiento=extraccion.get("vencimiento"),
+                        emisor=extraccion.get("emisor"),
+                        cuit_emisor=extraccion.get("cuit_emisor"),
+                        moneda=extraccion.get("moneda"),
+                        numero_factura=extraccion.get("numero_factura"),
+                        cuota_numero=extraccion.get("cuota_numero"),
+                    )
+                    db.add(fd)
+
+                facturas_creadas += 1
+            except Exception:
+                logger.warning("Error procesando factura %s: %s", f.get("name", "?"), exc_info=True)
+                errores_extraccion += 1
+                continue
 
     try:
         resultados = await Conciliador.conciliar(
@@ -97,6 +112,7 @@ async def process_reconciliation(
     return {
         "resumen_id": resumen_id,
         "facturas_procesadas": facturas_creadas,
+        "facturas_con_error": errores_extraccion,
         "periodo": resumen.periodo,
         "resultados": [
             {

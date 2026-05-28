@@ -58,6 +58,7 @@ Campos requeridos (devolvé null SOLO si el campo está realmente ausente del te
 - No inventes datos. Si realmente no aparece tras buscar con las keywords indicadas, poné null.
 - Respondé SOLO con el JSON válido. Sin explicaciones, sin markdown, sin texto adicional."""
 
+        response = ""
         try:
             response = llm_router.chat(
                 messages=[
