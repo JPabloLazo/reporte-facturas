@@ -58,6 +58,117 @@ function showToast(message, type) {
     }, 4000);
 }
 
+/* ============== Integrity Modal ============== */
+function showIntegrityModal(data) {
+    var warning = data.warnings.find(function (w) {
+        return w.codigo === 'CONTEO_DIFERENTE_POST_REINTENTO';
+    });
+    if (!warning) return;
+
+    var diff = Math.abs(warning.diferencia);
+    var direction = warning.diferencia > 0 ? 'menos' : 'más';
+    document.getElementById('integrity-modal-info').textContent =
+        'Se detectaron ' + warning.extraidas + ' transacciones, pero el conteo previo indicaba ' + warning.esperadas + '.';
+    document.getElementById('integrity-modal-detail').textContent =
+        'Diferencia: ' + diff + ' transacciones de ' + direction + '. Podés reintentar, agregar la faltante, o continuar igual.';
+
+    document.getElementById('integrity-modal').classList.remove('hidden');
+}
+
+function closeIntegrityModal() {
+    document.getElementById('integrity-modal').classList.add('hidden');
+}
+
+function integrityRetry() {
+    closeIntegrityModal();
+    if (window._lastUploadedFile) {
+        var input = document.getElementById('file-input');
+        // Re-upload using stored file reference
+        var dt = new DataTransfer();
+        dt.items.add(window._lastUploadedFile);
+        input.files = dt.files;
+        input.dispatchEvent(new Event('change'));
+    } else {
+        showToast('No hay archivo para reintentar. Seleccioná el PDF nuevamente.', 'warning');
+        document.getElementById('file-input').click();
+    }
+}
+
+function integrityAddTransaction() {
+    closeIntegrityModal();
+    document.getElementById('integrity-add-fecha').value = '';
+    document.getElementById('integrity-add-descripcion').value = '';
+    document.getElementById('integrity-add-monto').value = '';
+    document.getElementById('integrity-add-moneda').value = 'ARS';
+    document.getElementById('integrity-add-modal').classList.remove('hidden');
+}
+
+function closeIntegrityAddModal() {
+    document.getElementById('integrity-add-modal').classList.add('hidden');
+}
+
+function integrityAddSave() {
+    var fecha = document.getElementById('integrity-add-fecha').value.trim();
+    var descripcion = document.getElementById('integrity-add-descripcion').value.trim();
+    var monto = document.getElementById('integrity-add-monto').value;
+    var moneda = document.getElementById('integrity-add-moneda').value;
+
+    if (!fecha || !descripcion || !monto) {
+        showToast('Completá todos los campos obligatorios', 'error');
+        return;
+    }
+    if (isNaN(parseFloat(monto))) {
+        showToast('Ingresá un monto válido', 'error');
+        return;
+    }
+
+    var tbody = document.getElementById('transactions-tbody');
+    if (!tbody) return;
+
+    var row = document.createElement('tr');
+    row.className = 'border-b hover:bg-gray-50';
+    row.innerHTML =
+        '<td class="py-3 px-4 text-sm">' + escapeHtml(fecha) + '</td>' +
+        '<td class="py-3 px-4 text-sm">' + escapeHtml(descripcion) + '</td>' +
+        '<td class="py-3 px-4 text-sm text-right font-medium">' + parseFloat(monto).toFixed(2) + '</td>' +
+        '<td class="py-3 px-4 text-sm text-center">' + escapeHtml(moneda) + '</td>' +
+        '<td class="py-3 px-4 text-sm text-center">—</td>';
+    tbody.appendChild(row);
+
+    // Update transaction count in summary
+    var countEl = document.getElementById('tx-summary-count');
+    if (countEl) {
+        var currentRows = tbody.querySelectorAll('tr').length;
+        countEl.textContent = currentRows;
+    }
+
+    closeIntegrityAddModal();
+    showToast('Transacción agregada manualmente', 'success');
+}
+
+function integrityContinue() {
+    closeIntegrityModal();
+    showToast('Continuando con los datos actuales', 'info');
+}
+
+// Wire modal buttons on DOM ready
+document.addEventListener('DOMContentLoaded', function () {
+    var btnRetry = document.getElementById('btn-integrity-retry');
+    if (btnRetry) btnRetry.addEventListener('click', integrityRetry);
+
+    var btnAdd = document.getElementById('btn-integrity-add');
+    if (btnAdd) btnAdd.addEventListener('click', integrityAddTransaction);
+
+    var btnContinue = document.getElementById('btn-integrity-continue');
+    if (btnContinue) btnContinue.addEventListener('click', integrityContinue);
+
+    var btnAddCancel = document.getElementById('integrity-add-cancel');
+    if (btnAddCancel) btnAddCancel.addEventListener('click', closeIntegrityAddModal);
+
+    var btnAddSave = document.getElementById('integrity-add-save');
+    if (btnAddSave) btnAddSave.addEventListener('click', integrityAddSave);
+});
+
 /* ============== Drag & Drop ============== */
 function initDragDrop() {
     var zone = document.getElementById('drop-zone');
@@ -95,6 +206,7 @@ function initDragDrop() {
             showToast('Solo se aceptan archivos PDF', 'error');
             return;
         }
+        window._lastUploadedFile = file;
         fileName.textContent = file.name;
         fileType.textContent = 'Analizando...';
         fileInfo.classList.remove('hidden');
@@ -149,6 +261,11 @@ function initDragDrop() {
                             showToast('Tarjetas nuevas detectadas: ' + (w.tarjetas || []).join(', ') + ' — asignales un responsable en la tabla', 'warning');
                         }
                     });
+                }
+
+                // Show integrity modal if counts don't match
+                if (data.requiere_decision_usuario) {
+                    showIntegrityModal(data);
                 }
             })
             .catch(function (err) {
