@@ -7,6 +7,7 @@ document.addEventListener('DOMContentLoaded', function () {
     initConfig();
     initCardModal();
     initAddCardModal();
+    initEmailButton();
     initToast();
     loadConfig();
 });
@@ -37,6 +38,11 @@ var toastTimeout;
 function initToast() {}
 
 function showToast(message, type) {
+    // Si hay un error_type, mostrar modal en vez de toast
+    if (type === 'error' && message && typeof message === 'object' && message.error_type) {
+        showErrorModal('Error de conexión', message.message || message.detail, message.suggestion);
+        return;
+    }
     type = type || 'success';
     var container = document.getElementById('toast-container');
     if (!container) return;
@@ -760,26 +766,7 @@ function initResults() {
         });
     }
 
-    var sendBtn = document.getElementById('btn-send-emails');
 
-    if (sendBtn) {
-        sendBtn.addEventListener('click', function () {
-            sendBtn.disabled = true;
-            sendBtn.textContent = 'Enviando...';
-            fetch('/api/reports/' + (window._resumenId || '') + '/email', { method: 'POST' })
-                .then(function (res) { return res.json(); })
-                .then(function (data) {
-                    showToast('Emails enviados correctamente', 'success');
-                })
-                .catch(function (err) {
-                    showToast('Error al enviar emails: ' + err.message, 'error');
-                })
-                .finally(function () {
-                    sendBtn.disabled = false;
-                    sendBtn.textContent = 'Enviar Emails';
-                });
-        });
-    }
 }
 
 function showTransactionsTable(data) {
@@ -905,19 +892,7 @@ function initConfig() {
 
     saveBtn.addEventListener('click', function () {
         var config = {
-            llm_provider: getVal('cfg-llm-provider'),
-            anthropic_key: getVal('cfg-anthropic-key'),
-            openai_key: getVal('cfg-openai-key'),
-            openrouter_key: getVal('cfg-openrouter-key'),
-            model_extract: getVal('cfg-model-extract'),
-            model_fallback: getVal('cfg-model-fallback'),
-            model_cheap: getVal('cfg-model-cheap'),
-            model_email: getVal('cfg-model-email'),
-            smtp_host: getVal('cfg-smtp-host'),
-            smtp_port: parseInt(getVal('cfg-smtp-port')) || 587,
-            smtp_user: getVal('cfg-smtp-user'),
-            smtp_pass: getVal('cfg-smtp-pass'),
-            responsable_email: getVal('cfg-responsable-email')
+            ia_profile: getVal('cfg-ia-profile')
         };
 
         saveBtn.disabled = true;
@@ -954,25 +929,16 @@ function loadConfig() {
     fetch('/api/config')
         .then(function (res) { return res.json(); })
         .then(function (data) {
-            setVal('cfg-llm-provider', data.llm_provider);
-            setVal('cfg-anthropic-key', data.anthropic_key || '');
-            setVal('cfg-openai-key', data.openai_key || '');
-            setVal('cfg-model-extract', data.model_extract);
-            setVal('cfg-model-fallback', data.model_fallback);
-            setVal('cfg-model-cheap', data.model_cheap);
-            setVal('cfg-model-email', data.model_email);
-            setVal('cfg-smtp-host', data.smtp_host || 'smtp.gmail.com');
-            setVal('cfg-smtp-port', data.smtp_port || 587);
-            setVal('cfg-smtp-user', data.smtp_user || '');
-            setVal('cfg-smtp-pass', data.smtp_pass || '');
-            setVal('cfg-responsable-email', data.responsable_email || '');
+            // Cargar perfil de IA
+            if (data.ia_profile) {
+                loadProfile(data.ia_profile);
+                document.getElementById('cfg-ia-profile').value = data.ia_profile;
+            }
+
 
             if (data.cards) {
                 renderCards(data.cards);
             }
-
-            // Load available models
-            loadAvailableModels();
         })
         .catch(function () {});
 }
@@ -1013,111 +979,6 @@ function renderCards(cards) {
                 });
         });
     });
-}
-
-/* ============== Dynamic Model List ============== */
-function loadAvailableModels() {
-    fetch('/api/config/models')
-        .then(function (r) { return r.json(); })
-        .then(function (data) {
-            var models = data.models || [];
-            populateModelSelect('cfg-model-extract', models);
-            populateModelSelect('cfg-model-fallback', models);
-            populateModelSelect('cfg-model-cheap', models);
-            populateModelSelect('cfg-model-email', models);
-
-            // Restore saved values after populating
-            fetch('/api/config')
-                .then(function (r) { return r.json(); })
-                .then(function (cfg) {
-                    setVal('cfg-model-extract', cfg.model_extract);
-                    setVal('cfg-model-fallback', cfg.model_fallback);
-                    setVal('cfg-model-cheap', cfg.model_cheap);
-                    setVal('cfg-model-email', cfg.model_email);
-                })
-                .catch(function () {});
-        })
-        .catch(function () {
-            // Fallback to basic models if API fails
-            var fallbackModels = [
-                {id: 'gpt-4o-mini', name: 'GPT-4o mini', provider: 'openai'},
-                {id: 'gpt-4o-2024-11-20', name: 'GPT-4o', provider: 'openai'},
-                {id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet', provider: 'anthropic'},
-                {id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4', provider: 'anthropic'},
-                {id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku', provider: 'anthropic'},
-            ];
-            ['cfg-model-extract', 'cfg-model-fallback', 'cfg-model-cheap', 'cfg-model-email'].forEach(function(id) {
-                var sel = document.getElementById(id);
-                if (!sel) return;
-                sel.innerHTML = '<option value="">Sin modelos disponibles</option>';
-                fallbackModels.forEach(function(m) {
-                    var opt = document.createElement('option');
-                    opt.value = m.id;
-                    opt.textContent = m.name + ' [' + m.provider + ']';
-                    sel.appendChild(opt);
-                });
-            });
-        });
-}
-
-function populateModelSelect(selectId, models) {
-    var sel = document.getElementById(selectId);
-    var searchInput = document.getElementById(selectId + '-search');
-    if (!sel) return;
-
-    // Store all models on the select for filtering
-    sel._allModels = models;
-
-    // Render options
-    renderModelOptions(sel, models, '');
-
-    // Show search input if more than 10 models
-    if (searchInput) {
-        if (models.length > 10) {
-            searchInput.classList.remove('hidden');
-        } else {
-            searchInput.classList.add('hidden');
-        }
-
-        // Remove old listener and add new one
-        searchInput._listener && searchInput.removeEventListener('input', searchInput._listener);
-        var handler = function () {
-            renderModelOptions(sel, sel._allModels, this.value.toLowerCase());
-        };
-        searchInput.addEventListener('input', handler);
-        searchInput._listener = handler;
-    }
-}
-
-function renderModelOptions(sel, models, filter) {
-    var selectedVal = sel.value;
-    sel.innerHTML = '';
-
-    var emptyOpt = document.createElement('option');
-    emptyOpt.value = '';
-    emptyOpt.textContent = '— Seleccionar modelo —';
-    sel.appendChild(emptyOpt);
-
-    var count = 0;
-    models.forEach(function (m) {
-        var label = m.name + (m.provider ? ' [' + m.provider + ']' : '');
-        if (filter && label.toLowerCase().indexOf(filter) === -1 && m.id.toLowerCase().indexOf(filter) === -1) {
-            return;
-        }
-        var opt = document.createElement('option');
-        opt.value = m.id;
-        opt.textContent = label;
-        sel.appendChild(opt);
-        count++;
-    });
-
-    if (count === 0 && filter) {
-        sel.innerHTML = '<option value="">Sin resultados para "' + filter + '"</option>';
-    }
-
-    if (selectedVal) {
-        sel.value = selectedVal;
-    }
 }
 
 /* ============== Card Modal (new card detection) ============== */
@@ -1534,4 +1395,144 @@ function initAddCardModal() {
                 showToast(err.message, 'error');
             });
     });
+}
+
+// --- Perfiles de IA ---
+function selectProfile(profile) {
+    document.querySelectorAll('.profile-card').forEach(function(card) {
+        card.classList.remove('border-green-500', 'bg-green-50');
+        card.querySelector('.profile-check').classList.add('hidden');
+    });
+    var selected = document.querySelector('.profile-card[data-profile="' + profile + '"]');
+    if (selected) {
+        selected.classList.add('border-green-500', 'bg-green-50');
+        selected.querySelector('.profile-check').classList.remove('hidden');
+    }
+    document.getElementById('cfg-ia-profile').value = profile;
+}
+
+function loadProfile(profile) {
+    if (profile) {
+        selectProfile(profile);
+    }
+}
+
+// --- Email Preview & Mailto ---
+function initEmailButton() {
+    var btn = document.getElementById('btn-send-emails');
+    if (!btn) return;
+    btn.addEventListener('click', function () {
+        var resumenId = window._resumenId;
+        if (!resumenId) { showToast('No hay resumen cargado', 'error'); return; }
+
+        btn.disabled = true;
+        btn.textContent = 'Generando...';
+
+        fetch('/api/reports/' + resumenId + '/email/preview', { method: 'POST' })
+            .then(function (res) {
+                return res.json().then(function (data) {
+                    if (!res.ok) throw new Error(data.detail || 'Error al generar preview');
+                    return data;
+                });
+            })
+            .then(function (data) {
+                if (!data.drafts || data.drafts.length === 0) {
+                    showToast(data.message || 'No hay borradores para enviar', 'info');
+                    return;
+                }
+                renderEmailDrafts(data.drafts);
+                openEmailModal();
+            })
+            .catch(function (err) {
+                showToast(err.message, 'error');
+            })
+            .finally(function () {
+                btn.disabled = false;
+                btn.textContent = 'Enviar emails';
+            });
+    });
+}
+
+function renderEmailDrafts(drafts) {
+    var container = document.getElementById('email-drafts-container');
+    container.innerHTML = '';
+
+    drafts.forEach(function (draft, idx) {
+        var div = document.createElement('div');
+        div.className = 'border rounded-lg p-4 bg-gray-50';
+        div.id = 'draft-' + idx;
+        div.innerHTML =
+            '<div class="flex items-center justify-between mb-3">' +
+            '<span class="font-medium text-gray-700">📧 Email para ' + escapeHtml(draft.recipient_name) + '</span>' +
+            '<label class="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">' +
+            '<input type="checkbox" checked class="draft-checkbox" data-idx="' + idx + '">' +
+            'Incluir' +
+            '</label>' +
+            '</div>' +
+            '<div class="space-y-2">' +
+            '<div>' +
+            '<label class="text-xs text-gray-500 font-medium">Para:</label>' +
+            '<input type="email" class="draft-to w-full border border-gray-300 rounded px-2 py-1 text-sm" value="' + escapeHtml(draft.recipient_email) + '" data-idx="' + idx + '">' +
+            '</div>' +
+            '<div>' +
+            '<label class="text-xs text-gray-500 font-medium">Asunto:</label>' +
+            '<input type="text" class="draft-subject w-full border border-gray-300 rounded px-2 py-1 text-sm" value="' + escapeHtml(draft.subject) + '" data-idx="' + idx + '">' +
+            '</div>' +
+            '<div>' +
+            '<label class="text-xs text-gray-500 font-medium">Cuerpo:</label>' +
+            '<textarea class="draft-body w-full border border-gray-300 rounded px-2 py-1 text-sm h-24 font-mono" data-idx="' + idx + '">' + escapeHtml(draft.body_text) + '</textarea>' +
+            '</div>' +
+            '</div>';
+        container.appendChild(div);
+    });
+}
+
+function openEmailModal() {
+    document.getElementById('email-modal').classList.remove('hidden');
+}
+
+function closeEmailModal() {
+    document.getElementById('email-modal').classList.add('hidden');
+}
+
+function sendEmailsViaMailto() {
+    var drafts = document.querySelectorAll('#email-drafts-container > div');
+    var sentCount = 0;
+
+    drafts.forEach(function (draftDiv, idx) {
+        var checkbox = draftDiv.querySelector('.draft-checkbox');
+        if (!checkbox || !checkbox.checked) return;
+
+        var to = draftDiv.querySelector('.draft-to').value.trim();
+        var subject = draftDiv.querySelector('.draft-subject').value.trim();
+        var body = draftDiv.querySelector('.draft-body').value.trim();
+
+        if (!to) return;
+
+        var mailtoLink = 'mailto:' + encodeURIComponent(to) +
+            '?subject=' + encodeURIComponent(subject) +
+            '&body=' + encodeURIComponent(body);
+
+        window.open(mailtoLink, '_blank');
+        sentCount++;
+    });
+
+    if (sentCount > 0) {
+        showToast(sentCount + ' email(s) abiertos en tu cliente de correo', 'success');
+        closeEmailModal();
+    } else {
+        showToast('No hay emails seleccionados para enviar', 'warning');
+    }
+}
+
+// --- Modal de Error ---
+function showErrorModal(title, message, suggestion) {
+    document.getElementById('error-modal-title').textContent = title || 'Error';
+    document.getElementById('error-modal-message').textContent = message || '';
+    document.getElementById('error-modal-suggestion').textContent = suggestion || '';
+    document.getElementById('error-modal').classList.remove('hidden');
+}
+
+function closeErrorModal() {
+    document.getElementById('error-modal').classList.add('hidden');
 }

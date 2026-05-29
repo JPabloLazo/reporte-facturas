@@ -18,7 +18,7 @@ from app.services.pdf_parser import (
     ResumenParser,
     TransaccionExtraida,
 )
-from app.services.llm_router import LLMRouter
+from app.services.llm_router import LLMRouter, LLMError, ERROR_SUGGESTIONS
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -74,7 +74,7 @@ async def upload_resumen(
     transacciones_extraidas: list[TransaccionExtraida] = []
 
     llm_instance = None
-    if settings.openrouter_api_key or settings.anthropic_api_key or settings.openai_api_key or settings.opencode_api_key:
+    if settings.openrouter_api_key:
         llm_instance = LLMRouter(settings)
 
     images_pil = await asyncio.to_thread(convert_from_path, save_path, dpi=100)
@@ -94,22 +94,56 @@ async def upload_resumen(
 
         async def _count_page(img_b64: str) -> int | None:
             async with sem_count:
-                return await asyncio.to_thread(
-                    llm_instance.count_transactions, [img_b64], tipo_fallback
-                )
+                try:
+                    return await asyncio.to_thread(
+                        llm_instance.count_transactions, [img_b64], tipo_fallback
+                    )
+                except LLMError as e:
+                    suggestion = ERROR_SUGGESTIONS.get(e.type, ERROR_SUGGESTIONS["unknown"])
+                    status_map = {
+                        "insufficient_credits": 402,
+                        "rate_limit": 429,
+                        "model_unavailable": 503,
+                        "network_error": 502,
+                    }
+                    raise HTTPException(
+                        status_code=status_map.get(e.type, 502),
+                        detail={
+                            "error_type": e.type,
+                            "message": str(e),
+                            "suggestion": suggestion,
+                        }
+                    )
 
         count_results = await asyncio.gather(*[_count_page(img) for img in images_b64])
         valid_counts = [c for c in count_results if c is not None]
         if valid_counts:
             expected_count = sum(valid_counts)
 
-    transacciones_extraidas, parser_warnings = await ResumenParser.procesar_resumen_async(
-        images_b64, llm_instance, card_type=tipo_fallback, expected_count=expected_count
-    )
+    try:
+        transacciones_extraidas, parser_warnings = await ResumenParser.procesar_resumen_async(
+            images_b64, llm_instance, card_type=tipo_fallback, expected_count=expected_count
+        )
+    except LLMError as e:
+        suggestion = ERROR_SUGGESTIONS.get(e.type, ERROR_SUGGESTIONS["unknown"])
+        status_map = {
+            "insufficient_credits": 402,
+            "rate_limit": 429,
+            "model_unavailable": 503,
+            "network_error": 502,
+        }
+        raise HTTPException(
+            status_code=status_map.get(e.type, 502),
+            detail={
+                "error_type": e.type,
+                "message": str(e),
+                "suggestion": suggestion,
+            }
+        )
 
     if not transacciones_extraidas:
         os.remove(save_path)
-        has_llm = bool(settings.openrouter_api_key or settings.anthropic_api_key or settings.openai_api_key or settings.opencode_api_key)
+        has_llm = bool(settings.openrouter_api_key)
         if not has_llm:
             raise HTTPException(400, "No se pudieron extraer transacciones. El PDF podría ser una imagen (foto de WhatsApp). Configurá una API key de IA en Configuración > Proveedores de IA para activar el procesamiento por imagen.")
         raise HTTPException(400, "No se pudieron extraer transacciones del PDF. Verificá que el formato del resumen sea compatible (AMEX o VISA).")

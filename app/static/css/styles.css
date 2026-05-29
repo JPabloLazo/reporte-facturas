@@ -135,3 +135,66 @@
         font-size: 0.8125rem;
     }
 }
+
+/* Profile Cards */
+.profile-card {
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+.profile-card:hover {
+    border-color: #93c5fd !important;
+}
+.profile-card.border-green-500 {
+    border-width: 2px;
+}
+
+/* === TEST ONLY: Perfil gratuito === */
+/* TODO: Eliminar antes de producción */
+.profile-card[data-profile="free"].border-green-500 {
+    border-color: #eab308 !important;
+    border-width: 2px;
+}
+/* === FIN TEST ONLY === */
+
+/* Profile Check Badge */
+.profile-check {
+    transition: all 0.2s ease;
+}
+
+/* Error Modal */
+#error-modal {
+    animation: fadeIn 0.2s ease;
+}
+#error-modal .relative {
+    animation: slideIn 0.25s ease;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+@keyframes slideIn {
+    from { transform: translateY(-20px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}
+
+/* Email Preview Modal */
+#email-modal .relative {
+    animation: slideIn 0.25s ease;
+}
+
+#email-modal textarea {
+    resize: vertical;
+    min-height: 80px;
+}
+
+#email-modal .draft-to,
+#email-modal .draft-subject {
+    font-family: inherit;
+}
+
+#email-modal input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    accent-color: #2563EB;
+}

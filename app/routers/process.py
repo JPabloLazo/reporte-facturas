@@ -13,7 +13,7 @@ from app.services.conciliador import Conciliador
 from app.services.drive_service import GoogleDriveService
 from app.services.excel_generator import ExcelGenerator
 from app.services.llm_extractor import InvoiceExtractor
-from app.services.llm_router import LLMRouter
+from app.services.llm_router import LLMRouter, LLMError, ERROR_SUGGESTIONS
 from app.services.markitdown_extractor import MarkitdownExtractor
 from app.services.preview_service import PreviewService
 
@@ -39,7 +39,7 @@ async def process_reconciliation(
     session_id = getattr(request, 'state', None) and getattr(request.state, 'session_id', '')
 
     llm_router = None
-    if settings.openrouter_api_key or settings.anthropic_api_key or settings.openai_api_key:
+    if settings.openrouter_api_key:
         llm_router = LLMRouter(settings)
 
     if carpeta_drive_id:
@@ -86,6 +86,7 @@ async def process_reconciliation(
             except Exception:
                 logger.warning("Error procesando factura %s: %s", f.get("name", "?"), exc_info=True)
                 errores_extraccion += 1
+                await db.rollback()
                 continue
 
     try:
@@ -93,6 +94,23 @@ async def process_reconciliation(
             resumen_id=resumen_id,
             db=db,
             llm_router=llm_router,
+        )
+    except LLMError as e:
+        suggestion = ERROR_SUGGESTIONS.get(e.type, ERROR_SUGGESTIONS["unknown"])
+        status_map = {
+            "insufficient_credits": 402,
+            "rate_limit": 429,
+            "model_unavailable": 503,
+            "network_error": 502,
+        }
+        await db.rollback()
+        raise HTTPException(
+            status_code=status_map.get(e.type, 502),
+            detail={
+                "error_type": e.type,
+                "message": str(e),
+                "suggestion": suggestion,
+            }
         )
     except Exception:
         logger.exception("Error en conciliación para resumen %s", resumen_id)
@@ -141,6 +159,8 @@ async def _extraer_datos_factura(markdown_text: str, llm_router) -> dict | None:
         extracted = InvoiceExtractor.extract_fields_from_markdown(markdown_text, llm_router)
         if extracted and extracted.get("numero_factura"):
             return extracted
+    except LLMError:
+        raise
     except Exception:
         logger.warning("Extracción LLM falló para factura", exc_info=True)
     return None

@@ -1,5 +1,4 @@
 import logging
-from collections import defaultdict
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
@@ -10,7 +9,6 @@ from app.config import settings
 from app.dependencies import get_db
 from app.models import Resumen, Transaccion, Conciliacion, TarjetaUsuario
 from app.services.email_generator import EmailGenerator
-from app.services.email_sender import EmailSender
 from app.services.excel_generator import ExcelGenerator
 from app.services.pdf_generator import PDFGenerator
 from app.services.llm_router import LLMRouter
@@ -18,8 +16,6 @@ from app.services.llm_router import LLMRouter
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-llm_router = LLMRouter(settings)
 
 
 @router.get("/{resumen_id}/excel")
@@ -184,17 +180,15 @@ async def download_transactions_pdf(
     )
 
 
-@router.post("/{resumen_id}/email")
-async def send_emails(
+@router.post("/{resumen_id}/email/preview")
+async def email_preview(
     resumen_id: int,
     db: AsyncSession = Depends(get_db),
 ):
+    """Genera borradores de email via LLM agrupados por titular de tarjeta."""
     resumen = await db.get(Resumen, resumen_id)
     if not resumen:
         raise HTTPException(404, "Resumen no encontrado")
-
-    if not settings.smtp_host or not settings.smtp_user:
-        raise HTTPException(400, "SMTP no configurado")
 
     result = await db.execute(
         select(Conciliacion, Transaccion)
@@ -204,8 +198,12 @@ async def send_emails(
     )
     conciliaciones = list(result.all())
 
-    transacciones_unmatched = [
+    if not conciliaciones:
+        return {"status": "ok", "drafts": [], "message": "No hay transacciones sin factura"}
+
+    transacciones = [
         {
+            "id": t.id,
             "fecha": str(t.fecha),
             "descripcion": t.descripcion,
             "monto": t.monto,
@@ -215,58 +213,26 @@ async def send_emails(
         for c, t in conciliaciones
     ]
 
-    if not transacciones_unmatched:
-        return {"status": "ok", "message": "No hay transacciones sin factura"}
+    result = await db.execute(select(TarjetaUsuario))
+    tarjetas = [
+        {
+            "numero_tarjeta": t.numero_tarjeta,
+            "nombre_usuario": t.nombre_usuario,
+            "email_usuario": t.email_usuario,
+        }
+        for t in result.scalars().all()
+    ]
 
-    resumen_info = {"periodo": resumen.periodo, "tipo": resumen.tipo}
-    excel_bytes = ExcelGenerator.generate_unmatched_excel(
-        resumen_info, transacciones_unmatched
+    llm_router = None
+    if settings.openrouter_api_key:
+        llm_router = LLMRouter(settings)
+
+    drafts = EmailGenerator.generate_emails(
+        transacciones_unmatched=transacciones,
+        tipo_resumen=resumen.tipo,
+        periodo=resumen.periodo,
+        tarjetas=tarjetas,
+        llm_router=llm_router,
     )
 
-    asunto, cuerpo = EmailGenerator.generate_email_content(
-        transacciones_unmatched, resumen.tipo, resumen.periodo,
-        "responsable", llm_router
-    )
-
-    enviados = []
-
-    if settings.email_responsable:
-        ok = EmailSender.send_email_with_attachment(
-            to_email=settings.email_responsable,
-            subject=asunto,
-            body_html=cuerpo,
-            attachment_bytes=excel_bytes,
-            settings=settings,
-        )
-        enviados.append({"to": settings.email_responsable, "status": "ok" if ok else "error"})
-
-    if resumen.tipo == "VISA":
-        por_tarjeta = defaultdict(list)
-        for t in transacciones_unmatched:
-            if t["numero_tarjeta"]:
-                por_tarjeta[t["numero_tarjeta"]].append(t)
-
-        for num_tarjeta, trans in por_tarjeta.items():
-            result = await db.execute(
-                select(TarjetaUsuario).where(TarjetaUsuario.numero_tarjeta == num_tarjeta)
-            )
-            usuario = result.scalar_one_or_none()
-            if usuario and usuario.email_usuario:
-                asunto_u, cuerpo_u = EmailGenerator.generate_email_content(
-                    trans, resumen.tipo, resumen.periodo,
-                    usuario.nombre_usuario, llm_router
-                )
-                ok = EmailSender.send_email_with_attachment(
-                    to_email=usuario.email_usuario,
-                    subject=asunto_u,
-                    body_html=cuerpo_u,
-                    attachment_bytes=excel_bytes,
-                    settings=settings,
-                )
-                enviados.append({"to": usuario.email_usuario, "status": "ok" if ok else "error"})
-
-    return {
-        "status": "ok",
-        "message": f"Emails enviados: {len(enviados)}",
-        "enviados": enviados,
-    }
+    return {"status": "ok", "drafts": drafts, "message": f"{len(drafts)} borradores generados"}

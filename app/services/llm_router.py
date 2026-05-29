@@ -1,5 +1,22 @@
-from app.config import Settings
+from app.config import Settings, IA_PROFILES, DEFAULT_IA_PROFILE
 import json
+
+
+class LLMError(Exception):
+    """Error estructurado de una API de LLM."""
+    def __init__(self, type: str, message: str, provider: str = "openrouter"):
+        self.type = type
+        self.message = message
+        self.provider = provider
+        super().__init__(self.message)
+
+ERROR_SUGGESTIONS = {
+    "insufficient_credits": "No hay saldo disponible en OpenRouter. Por favor, recargá tu cuenta para continuar.",
+    "rate_limit": "OpenRouter está recibiendo muchas solicitudes. Esperá unos segundos e intentá de nuevo.",
+    "model_unavailable": "El modelo seleccionado no está disponible. Probá con otro perfil en Configuración.",
+    "network_error": "No se pudo conectar con OpenRouter. Verificá tu conexión a internet.",
+    "unknown": "Ocurrió un error inesperado con OpenRouter. Si persiste, probá con otro perfil.",
+}
 
 
 class LLMRouter:
@@ -124,40 +141,31 @@ Formato JSON:
         }
         return prompts.get(card_type, self._PROMPT_GENERIC)
 
+    def _get_model_for_task(self, task_type: str) -> str:
+        """Resuelve el modelo para una tarea según el perfil activo."""
+        profile = getattr(self.settings, "ia_profile", DEFAULT_IA_PROFILE) or DEFAULT_IA_PROFILE
+        if profile not in IA_PROFILES:
+            profile = DEFAULT_IA_PROFILE
+        return IA_PROFILES[profile].get(task_type, IA_PROFILES[DEFAULT_IA_PROFILE]["extraction"])
+
+    @staticmethod
+    def _parse_openrouter_error(error_data: dict) -> LLMError:
+        """Parsea el error de OpenRouter y devuelve un LLMError tipificado."""
+        msg = (error_data.get("message") or "").lower()
+        if any(kw in msg for kw in ["insufficient", "credit", "balance", "funds"]):
+            return LLMError("insufficient_credits", str(error_data.get("message", "")))
+        if any(kw in msg for kw in ["rate", "too many", "429"]):
+            return LLMError("rate_limit", str(error_data.get("message", "")))
+        if any(kw in msg for kw in ["not found", "not available", "does not exist", "not supported"]):
+            return LLMError("model_unavailable", str(error_data.get("message", "")))
+        return LLMError("unknown", str(error_data.get("message", "")))
+
     def _get_provider_config(self, task_type: str) -> tuple[str, str, str]:
-        model_map = {
-            "extraction": self.settings.model_extraction,
-            "vision": self.settings.model_vision,
-            "reconciliation": self.settings.model_reconciliation,
-            "email": self.settings.model_email,
-        }
-        key_map = {
-            "anthropic": self.settings.anthropic_api_key,
-            "openai": self.settings.openai_api_key,
-            "openrouter": self.settings.openrouter_api_key,
-            "opencode": self.settings.opencode_api_key,
-        }
-        model = model_map.get(task_type, self.settings.model_extraction)
-
-        provider = self.settings.default_llm_provider
-        if model.startswith("claude-"):
-            provider = "anthropic"
-        elif model.startswith(("gpt-", "o1-", "o3-")):
-            provider = "openai"
-        elif provider == "anthropic" and not key_map["anthropic"]:
-            provider = "openai"
-        elif provider == "openai" and not key_map["openai"]:
-            provider = "openrouter"
-
-        api_key = key_map.get(provider, "")
+        model = self._get_model_for_task(task_type)
+        api_key = self.settings.openrouter_api_key
         if not api_key:
-            for p in ["anthropic", "openai", "openrouter", "opencode"]:
-                if key_map[p]:
-                    provider = p
-                    api_key = key_map[p]
-                    break
-
-        return provider, model, api_key
+            raise ValueError("No hay API key de OpenRouter configurada. Configurá OPENROUTER_API_KEY en .env")
+        return "openrouter", model, api_key
 
     def chat(self, messages: list, task_type: str = "extraction", max_tokens: int = 2000) -> str:
         provider, model, api_key = self._get_provider_config(task_type)
@@ -202,7 +210,7 @@ Formato JSON:
                 )
                 data = resp.json()
                 if "error" in data:
-                    raise ValueError(f"OpenRouter error: {data['error'].get('message', str(data['error']))}")
+                    raise self._parse_openrouter_error(data["error"])
                 if "choices" not in data or not data["choices"]:
                     raise ValueError(f"OpenRouter respuesta inesperada: {str(data)[:200]}")
                 return data["choices"][0]["message"]["content"]
@@ -324,7 +332,7 @@ Formato JSON:
                 )
                 data = resp.json()
                 if "error" in data:
-                    raise ValueError(f"OpenRouter error: {data['error'].get('message', str(data['error']))}")
+                    raise self._parse_openrouter_error(data["error"])
                 if "choices" not in data or not data["choices"]:
                     raise ValueError(f"OpenRouter respuesta inesperada: {str(data)[:200]}")
                 return data["choices"][0]["message"]["content"]

@@ -1,13 +1,9 @@
-import asyncio
-from datetime import datetime, timedelta
-
-import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.dependencies import get_db
 from app.models import Setting, TarjetaUsuario
-from app.config import settings
+from app.config import settings, IA_PROFILES, DEFAULT_IA_PROFILE
 
 router = APIRouter()
 
@@ -20,20 +16,17 @@ async def get_config(db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(TarjetaUsuario))
     cards = result.scalars().all()
 
+    # Leer ia_profile de DB
+    ia_profile = db_settings.get("ia_profile", DEFAULT_IA_PROFILE)
+    if ia_profile not in IA_PROFILES:
+        ia_profile = DEFAULT_IA_PROFILE
+
+    # Resolver modelos desde el perfil
+    ia_models = IA_PROFILES[ia_profile]
+
     return {
-        "llm_provider": db_settings.get("llm_provider", settings.default_llm_provider),
-        "anthropic_key": db_settings.get("anthropic_key", ""),
-        "openai_key": db_settings.get("openai_key", ""),
-        "openrouter_key": db_settings.get("openrouter_key", ""),
-        "model_extract": db_settings.get("model_extract", settings.model_extraction),
-        "model_fallback": db_settings.get("model_fallback", settings.model_vision),
-        "model_cheap": db_settings.get("model_cheap", settings.model_reconciliation),
-        "model_email": db_settings.get("model_email", settings.model_email),
-        "smtp_host": db_settings.get("smtp_host", settings.smtp_host),
-        "smtp_port": int(db_settings.get("smtp_port", settings.smtp_port)),
-        "smtp_user": db_settings.get("smtp_user", ""),
-        "smtp_pass": db_settings.get("smtp_pass", ""),
-        "responsable_email": db_settings.get("responsable_email", settings.email_responsable),
+        "ia_profile": ia_profile,
+        "ia_models": ia_models,
         "cards": [
             {
                 "id": c.id,
@@ -46,123 +39,10 @@ async def get_config(db: AsyncSession = Depends(get_db)):
     }
 
 
-_model_cache = {"data": None, "expires": None}
-
-
-@router.get("/models")
-async def list_models(db: AsyncSession = Depends(get_db)):
-    """Fetch available models from configured providers (OpenRouter, OpenAI, Anthropic).
-    Caches for 30 minutes."""
-    global _model_cache
-    
-    # Check cache
-    if _model_cache["data"] and _model_cache["expires"] and datetime.now() < _model_cache["expires"]:
-        return {"models": _model_cache["data"]}
-    
-    # Read API keys from DB
-    result = await db.execute(select(Setting).where(Setting.key.in_(["openrouter_key", "openai_key", "anthropic_key"])))
-    db_settings = {row.key: row.value for row in result.scalars().all()}
-    
-    # Also check env fallback
-    or_key = db_settings.get("openrouter_key") or settings.openrouter_api_key
-    oa_key = db_settings.get("openai_key") or settings.openai_api_key
-    an_key = db_settings.get("anthropic_key") or settings.anthropic_api_key
-    
-    all_models = []
-    
-    # 1. OpenRouter (public endpoint, no key needed to list)
-    try:
-        headers = {"Content-Type": "application/json"}
-        if or_key:
-            headers["Authorization"] = f"Bearer {or_key}"
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get("https://openrouter.ai/api/v1/models", headers=headers)
-            if resp.status_code == 200:
-                data = resp.json()
-                for m in data.get("data", []):
-                    all_models.append({
-                        "id": m["id"],
-                        "name": m.get("name", m["id"]),
-                        "provider": "openrouter",
-                    })
-    except Exception:
-        pass
-    
-    # 2. OpenAI
-    if oa_key:
-        try:
-            async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.get(
-                    "https://api.openai.com/v1/models",
-                    headers={"Authorization": f"Bearer {oa_key}"}
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    for m in data.get("data", []):
-                        all_models.append({
-                            "id": m["id"],
-                            "name": m["id"],
-                            "provider": "openai",
-                        })
-        except Exception:
-            pass
-    
-    # 3. Anthropic
-    if an_key:
-        try:
-            async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.get(
-                    "https://api.anthropic.com/v1/models",
-                    headers={
-                        "x-api-key": an_key,
-                        "anthropic-version": "2023-06-01"
-                    }
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    for m in data.get("data", []):
-                        all_models.append({
-                            "id": m.get("id") or m.get("name", ""),
-                            "name": m.get("display_name") or m.get("name") or m.get("id", ""),
-                            "provider": "anthropic",
-                        })
-        except Exception:
-            pass
-    
-    # Deduplicate by id
-    seen = set()
-    unique_models = []
-    for m in all_models:
-        if m["id"] not in seen:
-            seen.add(m["id"])
-            unique_models.append(m)
-    
-    # Sort by provider, then name
-    unique_models.sort(key=lambda x: (x["provider"], x["name"]))
-    
-    # Cache
-    _model_cache["data"] = unique_models
-    _model_cache["expires"] = datetime.now() + timedelta(minutes=30)
-    
-    return {"models": unique_models}
-
-
 @router.put("")
 async def save_config(data: dict, db: AsyncSession = Depends(get_db)):
     mapping = {
-        "llm_provider": "llm_provider",
-        "anthropic_key": "anthropic_key",
-        "openai_key": "openai_key",
-        "openrouter_key": "openrouter_key",
-        "model_extract": "model_extract",
-        "model_fallback": "model_fallback",
-        "model_cheap": "model_cheap",
-        "model_email": "model_email",
-        "smtp_host": "smtp_host",
-        "smtp_port": "smtp_port",
-        "smtp_user": "smtp_user",
-        "smtp_pass": "smtp_pass",
-        "responsable_email": "responsable_email",
+        "ia_profile": "ia_profile",
     }
 
     for json_key, db_key in mapping.items():
@@ -175,6 +55,10 @@ async def save_config(data: dict, db: AsyncSession = Depends(get_db)):
                 db.add(Setting(key=db_key, value=str(data[json_key])))
 
     await db.commit()
+
+    if "ia_profile" in data:
+        settings.ia_profile = data["ia_profile"]
+
     return {"status": "ok"}
 
 
@@ -211,7 +95,8 @@ async def delete_card(card_id: int, db: AsyncSession = Depends(get_db)):
     card = await db.get(TarjetaUsuario, card_id)
     if card:
         await db.delete(card)
-        await db.commit()
+    await db.commit()
+
     return {"status": "ok"}
 
 

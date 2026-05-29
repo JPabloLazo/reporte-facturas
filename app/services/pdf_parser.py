@@ -3,6 +3,7 @@ import re
 from dataclasses import dataclass
 
 import pdfplumber
+from app.services.llm_router import LLMError
 
 _cache: dict[str, list["TransaccionExtraida"]] = {}
 
@@ -173,6 +174,8 @@ class ResumenParser:
                     )
                     if result_str:
                         return ResumenParser._parsear_response(result_str)
+                except LLMError:
+                    raise
                 except Exception:
                     pass
                 return []
@@ -220,6 +223,8 @@ class ResumenParser:
             if images:
                 try:
                     result_str = llm_router.extract_with_vision(images, card_type=card_type)
+                except LLMError:
+                    raise
                 except Exception:
                     result_str = ""
                 if result_str:

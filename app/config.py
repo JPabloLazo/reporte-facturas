@@ -1,25 +1,14 @@
 from pydantic_settings import BaseSettings
 
+DEFAULT_IA_PROFILE = "optimized"
+
 
 class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///./data/reporte_facturas.db"
-    anthropic_api_key: str = ""
-    openai_api_key: str = ""
     openrouter_api_key: str = ""
-    opencode_api_key: str = ""
-    default_llm_provider: str = "anthropic"
-    model_extraction: str = "claude-3-5-sonnet-20241022"
-    model_vision: str = "gpt-4o"
-    model_reconciliation: str = "gpt-4o-mini"
-    model_email: str = "claude-3-5-sonnet-20241022"
+    ia_profile: str = DEFAULT_IA_PROFILE
     google_client_id: str = ""
     google_client_secret: str = ""
-    smtp_host: str = ""
-    smtp_port: int = 587
-    smtp_user: str = ""
-    smtp_password: str = ""
-    email_from: str = ""
-    email_responsable: str = ""
     secret_key: str = "change-me-in-production"
     upload_dir: str = "./uploads"
 
@@ -30,3 +19,35 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+from typing import Dict
+
+IA_PROFILES: Dict[str, Dict[str, str]] = {
+    "fast": {
+        "extraction": "anthropic/claude-sonnet-4",
+        "vision": "openai/gpt-4o-2024-05-13",
+        "reconciliation": "anthropic/claude-sonnet-4",
+        "email": "anthropic/claude-3.5-haiku",
+    },
+    "optimized": {
+        "extraction": "deepseek/deepseek-chat-v3-0324",
+        "vision": "openai/gpt-4o-mini",
+        "reconciliation": "deepseek/deepseek-chat",
+        "email": "openai/gpt-4o-mini",
+    },
+    "slow": {
+        "extraction": "deepseek/deepseek-v3.2",
+        "vision": "google/gemini-2.0-flash-lite-001",
+        "reconciliation": "deepseek/deepseek-v3.2",
+        "email": "meta-llama/llama-3.1-8b-instruct",
+    },
+    # === TEST ONLY: Perfil gratuito para pruebas ===
+    # TODO: Eliminar antes de producción
+    "free": {
+        "extraction": "openai/gpt-oss-120b",
+        "vision": "google/gemma-4-31b-it",
+        "reconciliation": "deepseek/deepseek-v4-flash",
+        "email": "meta-llama/llama-3.3-70b-instruct",
+    },
+    # === FIN TEST ONLY ===
+}

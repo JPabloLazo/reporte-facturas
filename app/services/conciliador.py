@@ -3,6 +3,7 @@ from datetime import datetime
 import logging
 
 from sqlalchemy import select
+from app.services.llm_router import LLMError
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +173,8 @@ class Conciliador:
             )
             result = Conciliador._parse_llm_response(response, candidatos)
             return result
+        except LLMError:
+            raise
         except Exception:
             logger.warning("LLM match falló", exc_info=True)
             return None, 0.0

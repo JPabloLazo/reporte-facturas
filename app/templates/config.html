@@ -1,103 +1,82 @@
 <div class="max-w-3xl">
     <h2 class="text-lg font-semibold text-gray-800 mb-6">Configuración</h2>
 
-    <!-- LLM Providers -->
+    <!-- IA Profile -->
     <div class="bg-white rounded-lg shadow-sm border p-6 mb-6">
-        <h3 class="text-md font-semibold text-gray-700 mb-4">Proveedores de IA</h3>
-        <div class="space-y-4">
-            <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">Proveedor default</label>
-                <select id="cfg-llm-provider" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
-                    <option value="anthropic">Anthropic</option>
-                    <option value="openai">OpenAI</option>
-                    <option value="openrouter">OpenRouter</option>
-                </select>
+        <h3 class="text-md font-semibold text-gray-700 mb-4">Perfil de Inteligencia Artificial</h3>
+        <p class="text-sm text-gray-500 mb-4">
+            Seleccioná el perfil que define qué modelos de IA se usan para cada tarea del proceso.
+            Todos los modelos se sirven a través de OpenRouter.
+        </p>
+
+        <input type="hidden" id="cfg-ia-profile" value="optimized">
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4" id="ia-profiles">
+            <!-- Rápido -->
+            <div class="profile-card border-2 border-gray-200 rounded-lg p-4 cursor-pointer transition-all hover:shadow-md hover:border-blue-300" data-profile="fast" onclick="selectProfile('fast')">
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-lg font-bold text-gray-800">⚡ Rápido</span>
+                    <span class="profile-check hidden w-6 h-6 bg-green-500 rounded-full flex items-center justify-center text-white text-xs font-bold">✓</span>
+                </div>
+                <p class="text-xs text-gray-500 mb-3">Máxima precisión y velocidad para todas las tareas</p>
+                <div class="text-xs text-gray-400 space-y-1">
+                    <p>Extraer: <span class="font-mono text-gray-500">Claude Sonnet 4</span></p>
+                    <p>Visión: <span class="font-mono text-gray-500">GPT-4o</span></p>
+                    <p>Conciliar: <span class="font-mono text-gray-500">Claude Sonnet 4</span></p>
+                    <p>Email: <span class="font-mono text-gray-500">Claude 3.5 Haiku</span></p>
+                </div>
             </div>
 
-            <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">Anthropic API Key</label>
-                <input type="password" id="cfg-anthropic-key" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" placeholder="sk-ant-...">
-            </div>
-            <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">OpenAI API Key</label>
-                <input type="password" id="cfg-openai-key" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" placeholder="sk-...">
-            </div>
-            <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">OpenRouter API Key</label>
-                <input type="password" id="cfg-openrouter-key" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" placeholder="sk-or-...">
+            <!-- Optimizado (default) -->
+            <div class="profile-card border-2 border-green-500 bg-green-50 rounded-lg p-4 cursor-pointer transition-all hover:shadow-md" data-profile="optimized" onclick="selectProfile('optimized')">
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-lg font-bold text-gray-800">⭐ Optimizado</span>
+                    <span class="profile-check w-6 h-6 bg-green-500 rounded-full flex items-center justify-center text-white text-xs font-bold">✓</span>
+                </div>
+                <p class="text-xs text-gray-500 mb-3">Mejor relación calidad/precio para uso diario</p>
+                <div class="text-xs text-gray-400 space-y-1">
+                    <p>Extraer: <span class="font-mono text-gray-500">DeepSeek V3 (0324)</span></p>
+                    <p>Visión: <span class="font-mono text-gray-500">GPT-4o mini</span></p>
+                    <p>Conciliar: <span class="font-mono text-gray-500">DeepSeek V3</span></p>
+                    <p>Email: <span class="font-mono text-gray-500">GPT-4o mini</span></p>
+                </div>
             </div>
 
-            <hr class="my-4">
+            <!-- Lento -->
+            <div class="profile-card border-2 border-gray-200 rounded-lg p-4 cursor-pointer transition-all hover:shadow-md hover:border-blue-300" data-profile="slow" onclick="selectProfile('slow')">
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-lg font-bold text-gray-800">🐢 Lento</span>
+                    <span class="profile-check hidden w-6 h-6 bg-green-500 rounded-full flex items-center justify-center text-white text-xs font-bold">✓</span>
+                </div>
+                <p class="text-xs text-gray-500 mb-3">Económico, priorizando precisión sobre velocidad</p>
+                <div class="text-xs text-gray-400 space-y-1">
+                    <p>Extraer: <span class="font-mono text-gray-500">DeepSeek V3.2</span></p>
+                    <p>Visión: <span class="font-mono text-gray-500">Gemini 2.0 Flash Lite</span></p>
+                    <p>Conciliar: <span class="font-mono text-gray-500">DeepSeek V3.2</span></p>
+                    <p>Email: <span class="font-mono text-gray-500">Llama 3.1 8B</span></p>
+                </div>
+            </div>
 
-            <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">Modelo — Extraer facturas</label>
-                <div class="relative">
-                    <select id="cfg-model-extract" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
-                        <option value="">Cargando...</option>
-                    </select>
-                    <input id="cfg-model-extract-search" type="text" placeholder="🔍 Filtrar modelos..." class="hidden mt-1 w-full border border-gray-300 rounded-lg px-3 py-1.5 text-xs">
+            <!-- === TEST ONLY: Perfil gratuito === -->
+            <!-- TODO: Eliminar antes de producción -->
+            <div class="profile-card border-2 border-yellow-400 bg-yellow-50 rounded-lg p-4 cursor-pointer transition-all hover:shadow-md" data-profile="free" onclick="selectProfile('free')">
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-lg font-bold text-yellow-600">🆓 Gratis (Test)</span>
+                    <span class="profile-check hidden w-6 h-6 bg-green-500 rounded-full flex items-center justify-center text-white text-xs font-bold">✓</span>
                 </div>
-                <p class="text-xs text-gray-400 mt-1">Mejor precisión en español</p>
-            </div>
-            <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">Modelo — Fallback resúmenes</label>
-                <div class="relative">
-                    <select id="cfg-model-fallback" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
-                        <option value="">Cargando...</option>
-                    </select>
-                    <input id="cfg-model-fallback-search" type="text" placeholder="🔍 Filtrar modelos..." class="hidden mt-1 w-full border border-gray-300 rounded-lg px-3 py-1.5 text-xs">
+                <p class="text-xs text-yellow-600 mb-3">Solo para pruebas. Modelos gratuitos de OpenRouter.</p>
+                <div class="text-xs text-gray-400 space-y-1">
+                    <p>Extraer: <span class="font-mono text-gray-500">GPT-OSS 120B</span></p>
+                    <p>Visión: <span class="font-mono text-gray-500">Gemma 4 31B</span></p>
+                    <p>Conciliar: <span class="font-mono text-gray-500">DeepSeek V4 Flash</span></p>
+                    <p>Email: <span class="font-mono text-gray-500">Llama 3.3 70B</span></p>
                 </div>
-                <p class="text-xs text-gray-400 mt-1">Ideal para leer fotos de WhatsApp</p>
             </div>
-            <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">Modelo — Conciliación dudosa</label>
-                <div class="relative">
-                    <select id="cfg-model-cheap" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
-                        <option value="">Cargando...</option>
-                    </select>
-                    <input id="cfg-model-cheap-search" type="text" placeholder="🔍 Filtrar modelos..." class="hidden mt-1 w-full border border-gray-300 rounded-lg px-3 py-1.5 text-xs">
-                </div>
-                <p class="text-xs text-gray-400 mt-1">Muy económico, suficiente</p>
-            </div>
-            <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">Modelo — Redactar emails</label>
-                <div class="relative">
-                    <select id="cfg-model-email" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
-                        <option value="">Cargando...</option>
-                    </select>
-                    <input id="cfg-model-email-search" type="text" placeholder="🔍 Filtrar modelos..." class="hidden mt-1 w-full border border-gray-300 rounded-lg px-3 py-1.5 text-xs">
-                </div>
-                <p class="text-xs text-gray-400 mt-1">Mejor redacción profesional</p>
-            </div>
+            <!-- === FIN TEST ONLY === -->
         </div>
     </div>
 
-    <!-- Email SMTP -->
-    <div class="bg-white rounded-lg shadow-sm border p-6 mb-6">
-        <h3 class="text-md font-semibold text-gray-700 mb-4">Email</h3>
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">SMTP Host</label>
-                <input type="text" id="cfg-smtp-host" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" value="smtp.gmail.com">
-            </div>
-            <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">SMTP Port</label>
-                <input type="number" id="cfg-smtp-port" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" value="587">
-            </div>
-            <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">Usuario</label>
-                <input type="text" id="cfg-smtp-user" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" placeholder="tucorreo@gmail.com">
-            </div>
-            <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">Contraseña</label>
-                <input type="password" id="cfg-smtp-pass" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
-            </div>
-            <div class="md:col-span-2">
-                <label class="block text-sm font-medium text-gray-700 mb-1">Email del responsable</label>
-                <input type="email" id="cfg-responsable-email" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" placeholder="resp@corp.com">
-            </div>
-        </div>
-    </div>
+
 
     <!-- VISA Cards -->
     <div class="bg-white rounded-lg shadow-sm border p-6 mb-6">

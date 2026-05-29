@@ -25,7 +25,7 @@ class PreviewService:
 
     async def _build_llm_router(self) -> LLMRouter | None:
         from app.config import settings
-        if settings.openrouter_api_key or settings.anthropic_api_key or settings.openai_api_key:
+        if settings.openrouter_api_key:
             return LLMRouter(settings)
         return None
 
