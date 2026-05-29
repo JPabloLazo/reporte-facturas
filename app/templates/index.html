@@ -336,7 +336,78 @@
 <div id="tab-historial" class="tab-content hidden">
     <div class="bg-white rounded-lg shadow-sm border p-6">
         <h2 class="text-lg font-semibold text-gray-800 mb-4">Historial</h2>
-        <p class="text-gray-500 text-sm">No hay procesos anteriores.</p>
+
+        <!-- Loading spinner -->
+        <div id="historial-loading" class="hidden flex items-center gap-2 text-gray-500 text-sm py-4">
+            <div class="animate-spin h-4 w-4 border-2 border-blue-600 border-t-transparent rounded-full"></div>
+            <span>Cargando historial...</span>
+        </div>
+
+        <!-- Empty state -->
+        <div id="historial-empty" class="hidden py-8 text-center">
+            <p class="text-gray-500 text-sm">No hay procesamientos previos</p>
+        </div>
+
+        <!-- Table -->
+        <div id="historial-table-container" class="hidden overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="bg-gray-50 border-b">
+                        <th class="text-left py-3 px-4 font-medium text-gray-600">Período</th>
+                        <th class="text-left py-3 px-4 font-medium text-gray-600">Tipo</th>
+                        <th class="text-left py-3 px-4 font-medium text-gray-600">Archivo</th>
+                        <th class="text-left py-3 px-4 font-medium text-gray-600">Fecha</th>
+                        <th class="text-right py-3 px-4 font-medium text-gray-600">Transacciones</th>
+                        <th class="text-right py-3 px-4 font-medium text-gray-600">Match</th>
+                        <th class="text-right py-3 px-4 font-medium text-gray-600">Sin factura</th>
+                    </tr>
+                </thead>
+                <tbody id="historial-tbody"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+<!-- Modal: Historial detail -->
+<div id="historial-detail-modal" class="fixed inset-0 z-50 hidden">
+    <div class="absolute inset-0 bg-black bg-opacity-50" onclick="closeHistorialModal()"></div>
+    <div class="relative mx-auto mt-10 max-w-6xl bg-white rounded-lg shadow-xl max-h-[85vh] overflow-hidden">
+        <div class="flex items-center justify-between p-4 border-b">
+            <h3 class="text-lg font-semibold text-gray-800">Detalle — <span id="historial-modal-header"></span></h3>
+            <button onclick="closeHistorialModal()" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+        </div>
+        <div id="historial-modal-loading" class="flex items-center justify-center gap-2 text-gray-500 text-sm py-8">
+            <div class="animate-spin h-4 w-4 border-2 border-blue-600 border-t-transparent rounded-full"></div>
+            <span>Cargando detalle...</span>
+        </div>
+        <div id="historial-modal-error" class="hidden p-6 text-center text-red-600 bg-red-50 text-sm"></div>
+        <div id="historial-modal-body" class="p-4 overflow-y-auto max-h-[55vh]">
+            <div id="historial-modal-empty" class="hidden text-center py-8 text-gray-500 text-sm">Sin transacciones</div>
+            <div id="historial-modal-table-container" class="hidden overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead>
+                        <tr class="bg-gray-50 border-b">
+                            <th class="text-left py-3 px-4 font-medium text-gray-600">Fecha</th>
+                            <th class="text-left py-3 px-4 font-medium text-gray-600">Descripción</th>
+                            <th class="text-right py-3 px-4 font-medium text-gray-600">Monto</th>
+                            <th class="text-center py-3 px-4 font-medium text-gray-600">Moneda</th>
+                            <th class="text-center py-3 px-4 font-medium text-gray-600">Cuota</th>
+                            <th class="text-center py-3 px-4 font-medium text-gray-600">Estado</th>
+                            <th class="text-left py-3 px-4 font-medium text-gray-600">Factura</th>
+                            <th class="text-right py-3 px-4 font-medium text-gray-600">Monto factura</th>
+                        </tr>
+                    </thead>
+                    <tbody id="historial-modal-tbody"></tbody>
+                </table>
+            </div>
+        </div>
+        <div class="p-4 border-t flex justify-between items-center">
+            <button onclick="closeHistorialModal()" class="px-4 py-2 text-sm text-gray-600 hover:text-gray-800">Cerrar</button>
+            <div class="flex gap-2">
+                <button id="historial-modal-excel" class="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700">Descargar Excel</button>
+                <button id="historial-modal-pdf" class="bg-red-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-red-700">Descargar PDF</button>
+                <button id="historial-modal-delete" class="text-gray-600 text-xs hover:text-red-600 underline">Eliminar</button>
+            </div>
+        </div>
     </div>
 </div>
 {% endblock %}

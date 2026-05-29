@@ -28,6 +28,10 @@ function initTabs() {
             if (target) target.classList.remove('hidden');
             this.classList.remove('text-gray-500');
             this.classList.add('border-blue-600', 'text-blue-600');
+
+            if (tabId === 'historial') {
+                initHistorial();
+            }
         });
     });
 }
@@ -769,16 +773,10 @@ function initResults() {
 
 }
 
-function showTransactionsTable(data) {
-    var section = document.getElementById('transactions-section');
-    if (!section) return;
-    section.classList.remove('hidden');
-
-    document.getElementById('tx-summary-tipo').textContent = data.tipo || '-';
-    document.getElementById('tx-summary-count').textContent = (data.transacciones || []).length;
-    document.getElementById('tx-summary-periodo').textContent = data.periodo || '-';
-
-    var tbody = document.getElementById('transactions-tbody');
+function renderTransactionRows(tbodyId, data, includeConciliacion) {
+    if (includeConciliacion === undefined) includeConciliacion = false;
+    var tbody = document.getElementById(tbodyId);
+    if (!tbody) return;
     tbody.innerHTML = '';
     (data.transacciones || []).forEach(function (t) {
         var cuotaStr = '';
@@ -790,14 +788,73 @@ function showTransactionsTable(data) {
         var montoStr = '$' + Number(t.monto).toLocaleString('es-AR', {minimumFractionDigits: 2});
         var row = document.createElement('tr');
         row.className = 'border-b hover:bg-gray-50';
-        row.innerHTML =
+
+        var cellsHtml =
             '<td class="py-2 px-4 text-sm">' + (t.fecha || '') + '</td>' +
             '<td class="py-2 px-4 text-sm">' + (t.descripcion || '') + '</td>' +
             '<td class="py-2 px-4 text-sm text-right font-medium">' + montoStr + '</td>' +
             '<td class="py-2 px-4 text-sm text-center">' + (t.moneda || 'ARS') + '</td>' +
             '<td class="py-2 px-4 text-sm text-center">' + cuotaStr + '</td>';
-        tbody.appendChild(row);
+
+        if (includeConciliacion) {
+            var estadoHtml = '';
+            if (t.estado === 'MATCHED') {
+                estadoHtml = '<span class="bg-green-100 text-green-700 px-2 py-0.5 rounded text-xs font-medium">Match</span>';
+            } else if (t.estado === 'UNMATCHED') {
+                estadoHtml = '<span class="bg-red-100 text-red-700 px-2 py-0.5 rounded text-xs font-medium">Sin factura</span>';
+            } else {
+                estadoHtml = '<span class="bg-gray-100 text-gray-600 px-2 py-0.5 rounded text-xs font-medium">Sin procesar</span>';
+            }
+
+            var facturaHtml = '\u2014';
+            if (t.factura && t.factura.drive_file_name) {
+                var facturaJson = JSON.stringify(t.factura).replace(/'/g, '&#39;');
+                facturaHtml = '<button class="factura-toggle text-blue-600 underline hover:text-blue-800 text-xs" data-resumen-id="' + data.id + '" data-factura=\'' + facturaJson + '\'>' + t.factura.drive_file_name + '</button>';
+            }
+
+            var montoFacturaStr = '\u2014';
+            if (t.factura && t.factura.monto_total != null) {
+                montoFacturaStr = '$ ' + Number(t.factura.monto_total).toLocaleString('es-AR', {minimumFractionDigits: 2});
+            }
+
+            cellsHtml +=
+                '<td class="py-2 px-4 text-sm text-center">' + estadoHtml + '</td>' +
+                '<td class="py-2 px-4 text-sm text-left">' + facturaHtml + '</td>' +
+                '<td class="py-2 px-4 text-sm text-right">' + montoFacturaStr + '</td>';
+
+            row.innerHTML = cellsHtml;
+            tbody.appendChild(row);
+
+            if (t.estado === 'MATCHED' && t.factura) {
+                var detailRow = document.createElement('tr');
+                detailRow.className = 'hidden factura-detail-row';
+                detailRow.innerHTML = '<td colspan="8" class="px-4 py-2">' +
+                    '<div class="bg-gray-50 border rounded p-3 text-xs space-y-1">' +
+                    '<p><span class="font-medium text-gray-600">Emisor:</span> ' + (t.factura.emisor || '') + '</p>' +
+                    '<p><span class="font-medium text-gray-600">CUIT:</span> ' + (t.factura.cuit_emisor || '') + '</p>' +
+                    '<p><span class="font-medium text-gray-600">Tipo:</span> ' + (t.factura.tipo_factura || '') + ' | <span class="font-medium text-gray-600">N\u00b0 Factura:</span> ' + (t.factura.numero_factura || '') + '</p>' +
+                    '<p><span class="font-medium text-gray-600">Fecha:</span> ' + (t.factura.fecha || '') + '</p>' +
+                    '</div>' +
+                    '</td>';
+                tbody.appendChild(detailRow);
+            }
+        } else {
+            row.innerHTML = cellsHtml;
+            tbody.appendChild(row);
+        }
     });
+}
+
+function showTransactionsTable(data) {
+    var section = document.getElementById('transactions-section');
+    if (!section) return;
+    section.classList.remove('hidden');
+
+    document.getElementById('tx-summary-tipo').textContent = data.tipo || '-';
+    document.getElementById('tx-summary-count').textContent = (data.transacciones || []).length;
+    document.getElementById('tx-summary-periodo').textContent = data.periodo || '-';
+
+    renderTransactionRows('transactions-tbody', data);
 
     // Wire download buttons
     var rid = window._resumenId;
@@ -1535,4 +1592,163 @@ function showErrorModal(title, message, suggestion) {
 
 function closeErrorModal() {
     document.getElementById('error-modal').classList.add('hidden');
+}
+
+/* ============== Historial ============== */
+function initHistorial() {
+    var tbody = document.getElementById('historial-tbody');
+    var loading = document.getElementById('historial-loading');
+    var empty = document.getElementById('historial-empty');
+    var tableContainer = document.getElementById('historial-table-container');
+
+    if (!tbody) return;
+
+    tbody.innerHTML = '';
+    loading.classList.remove('hidden');
+    empty.classList.add('hidden');
+    tableContainer.classList.add('hidden');
+
+    fetch('/api/reports/historial?offset=0&limit=20')
+        .then(function (res) {
+            if (!res.ok) {
+                return res.json().then(function (err) {
+                    throw new Error(err.detail || 'Error al cargar historial');
+                });
+            }
+            return res.json();
+        })
+        .then(function (data) {
+            loading.classList.add('hidden');
+
+            if (!data.items || data.items.length === 0) {
+                empty.classList.remove('hidden');
+                return;
+            }
+
+            tableContainer.classList.remove('hidden');
+            data.items.forEach(function (item) {
+                var row = document.createElement('tr');
+                row.className = 'border-b hover:bg-gray-50 cursor-pointer';
+
+                var fechaStr = item.fecha_procesado
+                    ? new Date(item.fecha_procesado).toLocaleDateString('es-AR')
+                    : '—';
+
+                row.innerHTML =
+                    '<td class="py-3 px-4 text-sm">' + escapeHtml(item.periodo || '') + '</td>' +
+                    '<td class="py-3 px-4 text-sm">' + escapeHtml(item.tipo || '') + '</td>' +
+                    '<td class="py-3 px-4 text-sm">' + escapeHtml(item.archivo_nombre || '') + '</td>' +
+                    '<td class="py-3 px-4 text-sm text-gray-500">' + escapeHtml(fechaStr) + '</td>' +
+                    '<td class="py-3 px-4 text-sm text-right">' + (item.total_transacciones || 0) + '</td>' +
+                    '<td class="py-3 px-4 text-sm text-right text-green-600">' + (item.matched_count || 0) + '</td>' +
+                    '<td class="py-3 px-4 text-sm text-right text-red-600">' + (item.unmatched_count || 0) + '</td>';
+
+                row.addEventListener('click', function () {
+                    showHistorialDetailModal(item.id);
+                });
+
+                tbody.appendChild(row);
+            });
+        })
+        .catch(function (err) {
+            loading.classList.add('hidden');
+            empty.classList.remove('hidden');
+            empty.innerHTML = '<p class="text-red-600 text-sm">Error: ' + escapeHtml(err.message) + '</p>';
+            showToast(err.message, 'error');
+        });
+}
+
+function showHistorialDetailModal(resumenId) {
+    var modal = document.getElementById('historial-detail-modal');
+    var loading = document.getElementById('historial-modal-loading');
+    var error = document.getElementById('historial-modal-error');
+    var body = document.getElementById('historial-modal-body');
+    var empty = document.getElementById('historial-modal-empty');
+    var tableContainer = document.getElementById('historial-modal-table-container');
+    var tbody = document.getElementById('historial-modal-tbody');
+    var header = document.getElementById('historial-modal-header');
+
+    loading.classList.remove('hidden');
+    error.classList.add('hidden');
+    body.classList.remove('hidden');
+    empty.classList.add('hidden');
+    tableContainer.classList.add('hidden');
+    tbody.innerHTML = '';
+
+    modal.classList.remove('hidden');
+
+    fetch('/api/reports/' + resumenId)
+        .then(function (res) {
+            if (!res.ok) {
+                return res.json().then(function (err) {
+                    throw new Error(err.detail || 'Error al cargar detalle');
+                });
+            }
+            return res.json();
+        })
+        .then(function (data) {
+            loading.classList.add('hidden');
+            header.textContent = data.periodo + ' (' + data.tipo + ') — ' + (data.archivo_nombre || data.archivo || '');
+
+            if (!data.transacciones || data.transacciones.length === 0) {
+                empty.classList.remove('hidden');
+                return;
+            }
+
+            tableContainer.classList.remove('hidden');
+            renderTransactionRows('historial-modal-tbody', data, true);
+
+            document.getElementById('historial-modal-excel').onclick = function () {
+                window.location.href = '/api/reports/' + data.id + '/excel?filter=all';
+            };
+            document.getElementById('historial-modal-pdf').onclick = function () {
+                window.location.href = '/api/reports/' + data.id + '/transactions/pdf';
+            };
+            document.getElementById('historial-modal-delete').onclick = function () {
+                if (confirm('¿Eliminar este procesamiento?')) {
+                    closeHistorialModal();
+                    deleteHistorialItem(resumenId);
+                }
+            };
+
+            tbody.querySelectorAll('.factura-toggle').forEach(function (btn) {
+                btn.addEventListener('click', function (e) {
+                    e.stopPropagation();
+                    var row = this.closest('tr');
+                    var detailRow = row.nextElementSibling;
+                    if (detailRow && detailRow.classList.contains('factura-detail-row')) {
+                        detailRow.classList.toggle('hidden');
+                    }
+                });
+            });
+        })
+        .catch(function (err) {
+            loading.classList.add('hidden');
+            error.textContent = err.message;
+            error.classList.remove('hidden');
+            showToast(err.message, 'error');
+        });
+}
+
+function closeHistorialModal() {
+    document.getElementById('historial-detail-modal').classList.add('hidden');
+}
+
+function deleteHistorialItem(resumenId) {
+    fetch('/api/reports/historial/' + resumenId, { method: 'DELETE' })
+        .then(function (res) {
+            if (!res.ok) {
+                return res.json().then(function (err) {
+                    throw new Error(err.detail || 'Error al eliminar');
+                });
+            }
+            return res.json();
+        })
+        .then(function () {
+            showToast('Eliminado correctamente', 'success');
+            initHistorial();
+        })
+        .catch(function (err) {
+            showToast(err.message, 'error');
+        });
 }
